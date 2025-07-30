@@ -62,17 +62,17 @@ input bool     EnableNotifications = false; // Enable Push Notifications
 input bool     EnableDynamicColors = true;  // Enable Dynamic Colors
 
 // Настройки тренда и зон перекупленности/перепроданности
-input int      TrendPeriod = 20;        // Период для определения тренда
-input int      TrendSmoothingPeriod = 5; // Период сглаживания для определения тренда
-input int      ZonesAutoCalculationPeriod = 200; // Период для автоматического расчета зон
-input double   ZonePercentile = 80.0;   // Процентиль для зон (80% = верхние/нижние 20%)
-input color    OverboughtColor = clrRed; // Цвет зоны перекупленности
-input color    OversoldColor = clrGreen; // Цвет зоны перепроданности
-input int      ZoneTransparency = 80;   // Прозрачность зон (0-255, где 0=прозрачный, 255=непрозрачный)
+input int      TrendPeriod = 20;        // The period for determining the trend
+input int      TrendSmoothingPeriod = 5; // Smoothing period to determine the trend
+input int      ZonesAutoCalculationPeriod = 200; // The period for automatic zone calculation
+input double   ZonePercentile = 80.0;   // Percentile for zones (80% = upper/lower 20%)
+input color    OverboughtColor = clrRed; // The color of the overbought zone
+input color    OversoldColor = clrGreen; // Oversold zone color
+input int      ZoneTransparency = 80;   // Transparency of zones (0-255, where 0=transparent, 255=opaque)
 
 // Настройки информационной панели
 input bool     ShowInfoPanel = true;    // Show Information Panel
-input ENUM_BASE_CORNER InfoPanelCorner = CORNER_LEFT_LOWER; // Info Panel Corner
+input ENUM_BASE_CORNER InfoPanelCorner = CORNER_LEFT_UPPER; // Info Panel Corner
 input int      InfoPanelX = 10;         // Info Panel X Distance
 input int      InfoPanelY = 10;         // Info Panel Y Distance
 input int      InfoPanelWidth = 200;    // Info Panel Width
