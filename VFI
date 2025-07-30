@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Dubravaspb"
 #property link      "https://www.mql5.com"
-#property version   "1.07"
+#property version   "1.01"
 #property indicator_separate_window
 #property indicator_buffers 4
 #property indicator_plots   3
@@ -111,8 +111,8 @@ string GetLocalizedText(string key)
         if(key == "no") return "NO";
         if(key == "error_no_data") return "❌ ERROR: Could not get price data!";
         if(key == "critical_no_volumes") return "❌ CRITICAL: Very little volume data";
-        if(key == "poor_no_variation") return "⚠️ POOR: Volumes hardly change";
-        if(key == "satisfactory_tick_only") return "⚠️ SATISFACTORY: Tick volumes only";
+        if(key == "poor_no_variation") return " POOR: Volumes hardly change";
+        if(key == "satisfactory_tick_only") return " SATISFACTORY: Tick volumes only";
         if(key == "excellent_real_volumes") return "✅ EXCELLENT: Quality real volumes";
         if(key == "good_real_gaps") return "✅ GOOD: Real volumes with gaps";
         if(key == "change_instrument") return "Change instrument or broker";
@@ -155,8 +155,8 @@ string GetLocalizedText(string key)
         if(key == "no") return "НЕТ";
         if(key == "error_no_data") return "❌ ОШИБКА: Не удалось получить данные по ценам!";
         if(key == "critical_no_volumes") return "❌ КРИТИЧНО: Очень мало данных по объемам";
-        if(key == "poor_no_variation") return "⚠️ ПЛОХО: Объемы практически не меняются";
-        if(key == "satisfactory_tick_only") return "⚠️ УДОВЛЕТВОРИТЕЛЬНО: Только тиковые объемы";
+        if(key == "poor_no_variation") return " ПЛОХО: Объемы практически не меняются";
+        if(key == "satisfactory_tick_only") return " УДОВЛЕТВОРИТЕЛЬНО: Только тиковые объемы";
         if(key == "excellent_real_volumes") return "✅ ОТЛИЧНО: Качественные реальные объемы";
         if(key == "good_real_gaps") return "✅ ХОРОШО: Реальные объемы с пропусками";
         if(key == "change_instrument") return "Смените инструмент или брокера";
@@ -287,7 +287,7 @@ int OnInit()
     IndicatorSetInteger(INDICATOR_DIGITS, 4);
     
     //--- set short name
-    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_LB(" + 
+    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_DubravaSPB(" + 
                       IntegerToString(VFI_Length) + "," + 
                       DoubleToString(Coef, 1) + "," + 
                       DoubleToString(VCoef, 1) + ")");
@@ -325,20 +325,16 @@ void CheckVolumeData()
     string username = GetComputerUserName();
     string current_datetime = GetCurrentDateTime();
     
-    Print("╔══════════════════════════════════════════════════════════════════╗");
-    Print("║", GetLocalizedText("volume_check_header"), "║");
-    Print("╠══════════════════════════════════════════════════════════════════╣");
-    Print("║ ", GetLocalizedText("symbol"), ": ", symbol);
-    Print("║ ", GetLocalizedText("datetime"), ": ", current_datetime, " UTC");
-    Print("║ ", GetLocalizedText("user"), ": ", username);
-    Print("╠══════════════════════════════════════════════════════════════════╣");
+    Print(GetLocalizedText("volume_check_header"));
+    Print(GetLocalizedText("symbol"), ": ", symbol);
+    Print(GetLocalizedText("datetime"), ": ", current_datetime, " UTC");
+    Print(GetLocalizedText("user"), ": ", username);
     
     // Debug terminal paths
-    Print("║ ", GetLocalizedText("terminal_paths"), ":");
-    Print("║   TERMINAL_PATH: ", TerminalInfoString(TERMINAL_PATH));
-    Print("║   TERMINAL_DATA_PATH: ", TerminalInfoString(TERMINAL_DATA_PATH));
-    Print("║   TERMINAL_COMMONDATA_PATH: ", TerminalInfoString(TERMINAL_COMMONDATA_PATH));
-    Print("╠══════════════════════════════════════════════════════════════════╣");
+    Print(GetLocalizedText("terminal_paths"), ":");
+    Print("  TERMINAL_PATH: ", TerminalInfoString(TERMINAL_PATH));
+    Print("  TERMINAL_DATA_PATH: ", TerminalInfoString(TERMINAL_DATA_PATH));
+    Print("  TERMINAL_COMMONDATA_PATH: ", TerminalInfoString(TERMINAL_COMMONDATA_PATH));
     
     // Check execution type
     ENUM_SYMBOL_TRADE_EXECUTION execution = (ENUM_SYMBOL_TRADE_EXECUTION)SymbolInfoInteger(symbol, SYMBOL_TRADE_EXEMODE);
@@ -351,7 +347,7 @@ void CheckVolumeData()
         case SYMBOL_TRADE_EXECUTION_EXCHANGE: exec_type = "Exchange"; break;
         default: exec_type = "Unknown";
     }
-    Print("║ ", GetLocalizedText("execution_type"), ": ", exec_type);
+    Print(GetLocalizedText("execution_type"), ": ", exec_type);
     
     // Get test data
     MqlRates rates[];
@@ -359,13 +355,11 @@ void CheckVolumeData()
     
     if(copied <= 0)
     {
-        Print("║ ", GetLocalizedText("error_no_data"));
-        Print("╚══════════════════════════════════════════════════════════════════╝");
+        Print(GetLocalizedText("error_no_data"));
         return;
     }
     
-    Print("║ ", GetLocalizedText("bars_analyzed"), ": ", copied);
-    Print("╠══════════════════════════════════════════════════════════════════╣");
+    Print(GetLocalizedText("bars_analyzed"), ": ", copied);
     
     // Analyze tick volumes
     long total_tick_volume = 0;
@@ -414,11 +408,11 @@ void CheckVolumeData()
     
     // Tick volume results
     double avg_tick_volume = (double)total_tick_volume / copied;
-    Print("║ ", GetLocalizedText("tick_volumes"), ":");
-    Print("║   ", GetLocalizedText("average"), ": ", (long)avg_tick_volume);
-    Print("║   ", GetLocalizedText("maximum"), ": ", max_tick_volume);
-    Print("║   ", GetLocalizedText("minimum"), ": ", min_tick_volume);
-    Print("║   ", GetLocalizedText("zero_bars"), ": ", zero_tick_volumes, " (", 
+    Print(GetLocalizedText("tick_volumes"), ":");
+    Print("  ", GetLocalizedText("average"), ": ", (long)avg_tick_volume);
+    Print("  ", GetLocalizedText("maximum"), ": ", max_tick_volume);
+    Print("  ", GetLocalizedText("minimum"), ": ", min_tick_volume);
+    Print("  ", GetLocalizedText("zero_bars"), ": ", zero_tick_volumes, " (", 
           MathRound(zero_tick_volumes * 100.0 / copied), "%)");
     
     // Real volume results
@@ -426,19 +420,17 @@ void CheckVolumeData()
     if(has_real_volumes)
     {
         double avg_real_volume = (double)total_real_volume / (copied - zero_real_volumes);
-        Print("║ ", GetLocalizedText("real_volumes"), ":");
-        Print("║   ", GetLocalizedText("average"), ": ", (long)avg_real_volume);
-        Print("║   ", GetLocalizedText("maximum"), ": ", max_real_volume);
-        Print("║   ", GetLocalizedText("minimum"), ": ", min_real_volume);
-        Print("║   ", GetLocalizedText("zero_bars"), ": ", zero_real_volumes, " (", 
+        Print(GetLocalizedText("real_volumes"), ":");
+        Print("  ", GetLocalizedText("average"), ": ", (long)avg_real_volume);
+        Print("  ", GetLocalizedText("maximum"), ": ", max_real_volume);
+        Print("  ", GetLocalizedText("minimum"), ": ", min_real_volume);
+        Print("  ", GetLocalizedText("zero_bars"), ": ", zero_real_volumes, " (", 
               MathRound(zero_real_volumes * 100.0 / copied), "%)");
     }
     else
     {
-        Print("║ ", GetLocalizedText("real_volumes_unavailable"));
+        Print(GetLocalizedText("real_volumes_unavailable"));
     }
-    
-    Print("╠══════════════════════════════════════════════════════════════════╣");
     
     // Data quality assessment
     string quality_assessment = "";
@@ -470,30 +462,27 @@ void CheckVolumeData()
         recommendation = GetLocalizedText("will_work_correctly");
     }
     
-    Print("║ ", GetLocalizedText("quality_assessment"), ": ", quality_assessment);
-    Print("║ ", GetLocalizedText("recommendation"), ": ", recommendation);
+    Print(GetLocalizedText("quality_assessment"), ": ", quality_assessment);
+    Print(GetLocalizedText("recommendation"), ": ", recommendation);
     
     // Indicator settings
-    Print("╠══════════════════════════════════════════════════════════════════╣");
-    Print("║ ", GetLocalizedText("indicator_settings"), ":");
+    Print(GetLocalizedText("indicator_settings"), ":");
     
     if(has_real_volumes && UseRealVolume)
     {
-        Print("║   ", GetLocalizedText("will_use_real"));
+        Print("  ", GetLocalizedText("will_use_real"));
     }
     else
     {
-        Print("║   ", GetLocalizedText("will_use_tick"));
+        Print("  ", GetLocalizedText("will_use_tick"));
     }
     
-    Print("║   VFI Length: ", VFI_Length);
-    Print("║   Coefficient: ", Coef);
-    Print("║   Max Volume Cutoff: ", VCoef);
-    Print("║   Signal Length: ", SignalLength);
-    Print("║   Smooth VFI: ", SmoothVFI ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Show Histogram: ", ShowHisto ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    
-    Print("╚══════════════════════════════════════════════════════════════════╝");
+    Print("  VFI Length: ", VFI_Length);
+    Print("  Coefficient: ", Coef);
+    Print("  Max Volume Cutoff: ", VCoef);
+    Print("  Signal Length: ", SignalLength);
+    Print("  Smooth VFI: ", SmoothVFI ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Show Histogram: ", ShowHisto ? GetLocalizedText("yes") : GetLocalizedText("no"));
 }
 
 //+------------------------------------------------------------------+
@@ -522,7 +511,7 @@ int OnCalculate(const int rates_total,
         recalculate_all = true;
         last_calculated = 0;
         
-        Print("ℹ️ ", GetLocalizedText("settings_changed"));
+        Print(" ", GetLocalizedText("settings_changed"));
         
         // Инициализируем буферы
         ArrayInitialize(VFI_Buffer, EMPTY_VALUE);
@@ -757,10 +746,8 @@ void OnDeinit(const int reason)
     string username = GetComputerUserName();
     string current_datetime = GetCurrentDateTime();
     
-    Print("╔══════════════════════════════════════════════════════════════════╗");
-    Print("║", GetLocalizedText("indicator_finished"), "║");
-    Print("║ ", GetLocalizedText("reason"), ": ", reason);
-    Print("║ ", GetLocalizedText("time"), ": ", current_datetime, " UTC");
-    Print("║ ", GetLocalizedText("user"), ": ", username);
-    Print("╚══════════════════════════════════════════════════════════════════╝");
+    Print(GetLocalizedText("indicator_finished"));
+    Print(GetLocalizedText("reason"), ": ", reason);
+    Print(GetLocalizedText("time"), ": ", current_datetime, " UTC");
+    Print(GetLocalizedText("user"), ": ", username);
 }
