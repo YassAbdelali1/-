@@ -1,7 +1,7 @@
 #property copyright "Copyright 2025, Dubravaspb"
 #property link      "https://www.mql5.com"
-#property version   "1.10"
-#property description "Volume Flow Indicator [LazyBear] with Volume Check - Multilingual - FIXED - With Signals, Patterns, Risk Assessment, and Alerts"
+#property version   "1.01"
+#property description "Advanced implementation of Dubravaspb's Volume Flow Indicator with comprehensive analysis tools featuring buy/sell signals with customizable parameters, pattern recognition, real-time risk assessment, dynamic zones, trend analysis, multilingual interface, and customizable alerts - perfect for incorporating volume analysis into any trading strategy with powerful confirmation tools."
 #property indicator_separate_window
 #property indicator_buffers 11
 #property indicator_plots   9
@@ -1276,7 +1276,7 @@ int OnInit()
     IndicatorSetInteger(INDICATOR_DIGITS, 4);
     
     //--- set short name
-    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_LB(" + 
+    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_DubravaSPB(" + 
                       IntegerToString(VFI_Length) + "," + 
                       DoubleToString(Coef, 1) + "," + 
                       DoubleToString(VCoef, 1) + ")");
