@@ -209,8 +209,8 @@ string GetLocalizedText(string key)
         if(key == "critical_no_volumes") return "❌ CRITICAL: Very little volume data";
         if(key == "poor_no_variation") return "⚠️ POOR: Volumes hardly change";
         if(key == "satisfactory_tick_only") return "⚠️ SATISFACTORY: Tick volumes only";
-        if(key == "excellent_real_volumes") return "✅ EXCELLENT: Quality real volumes";
-        if(key == "good_real_gaps") return "✅ GOOD: Real volumes with gaps";
+        if(key == "excellent_real_volumes") return " EXCELLENT: Quality real volumes";
+        if(key == "good_real_gaps") return " GOOD: Real volumes with gaps";
         if(key == "change_instrument") return "Change instrument or broker";
         if(key == "may_work_incorrectly") return "Indicator may work incorrectly";
         if(key == "will_work_less_accurate") return "Indicator will work, but less accurately";
@@ -292,8 +292,8 @@ string GetLocalizedText(string key)
         if(key == "critical_no_volumes") return "❌ КРИТИЧНО: Очень мало данных по объемам";
         if(key == "poor_no_variation") return "⚠️ ПЛОХО: Объемы практически не меняются";
         if(key == "satisfactory_tick_only") return "⚠️ УДОВЛЕТВОРИТЕЛЬНО: Только тиковые объемы";
-        if(key == "excellent_real_volumes") return "✅ ОТЛИЧНО: Качественные реальные объемы";
-        if(key == "good_real_gaps") return "✅ ХОРОШО: Реальные объемы с пропусками";
+        if(key == "excellent_real_volumes") return " ОТЛИЧНО: Качественные реальные объемы";
+        if(key == "good_real_gaps") return " ХОРОШО: Реальные объемы с пропусками";
         if(key == "change_instrument") return "Смените инструмент или брокера";
         if(key == "may_work_incorrectly") return "Индикатор может работать некорректно";
         if(key == "will_work_less_accurate") return "Индикатор будет работать, но менее точно";
@@ -1308,28 +1308,28 @@ int OnInit()
     if(ShowInfoPanel)
     {
         CreateInfoPanel();
-        Print("✅ ", GetLocalizedText("info_panel_enabled"));
+        Print(" ", GetLocalizedText("info_panel_enabled"));
     }
     
     // Log that signals are enabled
-    Print("✅ ", GetLocalizedText("buy_signals_enabled"));
-    Print("✅ ", GetLocalizedText("sell_signals_enabled"));
+    Print(" ", GetLocalizedText("buy_signals_enabled"));
+    Print(" ", GetLocalizedText("sell_signals_enabled"));
     
     // Log additional features
     if(ShowPatterns)
-        Print("✅ ", GetLocalizedText("pattern_recognition_enabled"));
+        Print(" ", GetLocalizedText("pattern_recognition_enabled"));
     
     if(EnableAlerts)
-        Print("✅ ", GetLocalizedText("alerts_enabled"));
+        Print(" ", GetLocalizedText("alerts_enabled"));
         
     if(EnableNotifications)
-        Print("✅ ", GetLocalizedText("notifications_enabled"));
+        Print(" ", GetLocalizedText("notifications_enabled"));
         
     if(EnableDynamicColors)
-        Print("✅ ", GetLocalizedText("dynamic_colors_enabled"));
+        Print(" ", GetLocalizedText("dynamic_colors_enabled"));
     
     // Логируем включение автоматического определения зон
-    Print("✅ ", GetLocalizedText("auto_zones"));
+    Print(" ", GetLocalizedText("auto_zones"));
     
     //--- check volume data
     CheckVolumeData();
