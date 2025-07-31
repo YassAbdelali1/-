@@ -550,35 +550,35 @@ void CalculateOverboughtOversoldLevels(int bar_pos)
 //+------------------------------------------------------------------+
 void UpdateZoneObjects(int bar_pos)
 {
-    // Удаляем старые объекты зон
+    // Force removal of old objects
     ObjectDelete(0, overbought_zone_id);
     ObjectDelete(0, oversold_zone_id);
     ObjectDelete(0, overbought_line_id);
     ObjectDelete(0, oversold_line_id);
     
-    // Если уровни не рассчитаны или равны 0, установим базовые значения
+    // If levels aren't calculated or are 0, set base values
     if(dynamic_overbought_level == 0 || dynamic_oversold_level == 0)
     {
-        dynamic_overbought_level = 1.0;  // Значение по умолчанию для уровня перекупленности
-        dynamic_oversold_level = -1.0;   // Значение по умолчанию для уровня перепроданности
+        dynamic_overbought_level = 1.0;
+        dynamic_oversold_level = -1.0;
     }
     
-    // Получаем окно индикатора
+    // Get indicator window
     int window = ChartWindowFind();
     if(window < 0) return;
     
-    // Определяем верхнюю и нижнюю границы графика для зон
+    // Get chart boundaries
     double chart_max = 0, chart_min = 0;
     ChartGetDouble(0, CHART_PRICE_MAX, window, chart_max);
     ChartGetDouble(0, CHART_PRICE_MIN, window, chart_min);
     
-    // Если значения недоступны или неправильные, вычисляем примерные границы
+    // Calculate boundaries if not available
     if(chart_max <= 0 || chart_min >= 0)
     {
         chart_max = MathMax(2.0, dynamic_overbought_level * 1.5);
         chart_min = MathMin(-2.0, dynamic_oversold_level * 1.5);
         
-        // Ищем максимальные и минимальные значения индикатора
+        // Find max/min indicator values
         double max_value = -DBL_MAX;
         double min_value = DBL_MAX;
         
@@ -591,26 +591,47 @@ void UpdateZoneObjects(int bar_pos)
             }
         }
         
-        // Добавляем запас для границ
         chart_max = MathMax(chart_max, max_value * 1.2);
         chart_min = MathMin(chart_min, min_value * 1.2);
     }
     
-    // Получаем время для временных координат объектов
-    datetime time_start = iTime(Symbol(), PERIOD_CURRENT, MathMin(bar_pos, 100));
-    datetime time_end = TimeCurrent() + 86400; // Добавляем сутки для отображения вправо
+    // Time coordinates - FIXED FOR STRATEGY TESTER
+    datetime time_start, time_end;
     
-    // Если время недоступно, используем текущее время
-    if(time_start <= 0) time_start = TimeCurrent() - 86400 * 10; // Минус 10 суток
-    if(time_end <= 0) time_end = TimeCurrent() + 86400; // Плюс сутки
+    // Check if we're in the strategy tester
+    bool is_tester = MQLInfoInteger(MQL_TESTER);
     
-    Print("Creating zones at bar pos: ", bar_pos, ", times: ", time_start, " - ", time_end);
-    Print("Chart bounds: min=", chart_min, ", max=", chart_max);
-    Print("Zone levels: OB=", dynamic_overbought_level, ", OS=", dynamic_oversold_level);
+    if(is_tester)
+    {
+        // In strategy tester, use fixed range relative to visible bars
+        int first_visible_bar = ChartGetInteger(0, CHART_FIRST_VISIBLE_BAR);
+        int window_bars = ChartGetInteger(0, CHART_VISIBLE_BARS);
+        
+        // Get time for start and end based on visible chart range
+        time_start = iTime(Symbol(), PERIOD_CURRENT, first_visible_bar);
+        time_end = iTime(Symbol(), PERIOD_CURRENT, MathMax(0, first_visible_bar - window_bars));
+        
+        // If time values are invalid, use a fallback approach
+        if(time_start <= 0 || time_end <= 0)
+        {
+            time_start = iTime(Symbol(), PERIOD_CURRENT, MathMin(bar_pos, 100));
+            time_end = TimeCurrent() + 86400; // Add one day for display to the right
+        }
+    }
+    else
+    {
+        // Normal chart mode
+        time_start = iTime(Symbol(), PERIOD_CURRENT, MathMin(bar_pos, 100));
+        time_end = TimeCurrent() + 86400; // Add one day for display to the right
+    }
     
-    // Создаем горизонтальные линии для уровней (для более четкого обозначения уровней)
+    // Fallback if times are still invalid
+    if(time_start <= 0) time_start = TimeCurrent() - 86400 * 10;
+    if(time_end <= 0 || time_end <= time_start) time_end = time_start + 86400 * 30;
+    
+    // Create horizontal lines for levels
     if(ObjectCreate(0, overbought_line_id, OBJ_TREND, window, time_start, dynamic_overbought_level, 
-                                                         time_end, dynamic_overbought_level))
+                                                       time_end, dynamic_overbought_level))
     {
         ObjectSetInteger(0, overbought_line_id, OBJPROP_COLOR, OverboughtColor);
         ObjectSetInteger(0, overbought_line_id, OBJPROP_STYLE, STYLE_DASH);
@@ -624,7 +645,7 @@ void UpdateZoneObjects(int bar_pos)
     }
     
     if(ObjectCreate(0, oversold_line_id, OBJ_TREND, window, time_start, dynamic_oversold_level, 
-                                                      time_end, dynamic_oversold_level))
+                                                    time_end, dynamic_oversold_level))
     {
         ObjectSetInteger(0, oversold_line_id, OBJPROP_COLOR, OversoldColor);
         ObjectSetInteger(0, oversold_line_id, OBJPROP_STYLE, STYLE_DASH);
@@ -637,45 +658,33 @@ void UpdateZoneObjects(int bar_pos)
         ObjectSetInteger(0, oversold_line_id, OBJPROP_HIDDEN, true);
     }
     
-    // Создаем заливку зон с использованием OBJ_RECTANGLE
-    // Зона перекупленности (верхняя заливка)
+    // Create zone fills
     if(ObjectCreate(0, overbought_zone_id, OBJ_RECTANGLE, window, 
                    time_start, dynamic_overbought_level, time_end, chart_max))
     {
-        // Настраиваем цвет с учетом прозрачности
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_COLOR, OverboughtColor);
-        
-        // Настраиваем заливку
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_FILL, true);
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_BGCOLOR, OverboughtColor);
-        
-        // Настраиваем другие свойства
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_BACK, true);
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_SELECTABLE, false);
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_SELECTED, false);
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_HIDDEN, true);
         ObjectSetInteger(0, overbought_zone_id, OBJPROP_WIDTH, 1);
-        ObjectSetInteger(0, overbought_zone_id, OBJPROP_ZORDER, 0); // На задний план
+        ObjectSetInteger(0, overbought_zone_id, OBJPROP_ZORDER, 0);
     }
     
-    // Зона перепроданности (нижняя заливка)
     if(ObjectCreate(0, oversold_zone_id, OBJ_RECTANGLE, window, 
                    time_start, chart_min, time_end, dynamic_oversold_level))
     {
-        // Настраиваем цвет с учетом прозрачности
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_COLOR, OversoldColor);
-        
-        // Настраиваем заливку
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_FILL, true);
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_BGCOLOR, OversoldColor);
-        
-        // Настраиваем другие свойства
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_BACK, true);
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_SELECTABLE, false);
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_SELECTED, false);
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_HIDDEN, true);
         ObjectSetInteger(0, oversold_zone_id, OBJPROP_WIDTH, 1);
-        ObjectSetInteger(0, oversold_zone_id, OBJPROP_ZORDER, 0); // На задний план
+        ObjectSetInteger(0, oversold_zone_id, OBJPROP_ZORDER, 0);
     }
 }
 
@@ -2193,12 +2202,21 @@ void OnDeinit(const int reason)
     {
         DeleteInfoPanel();
     }
-    
-    // Удаляем объекты зон
-    ObjectDelete(0, overbought_zone_id);
-    ObjectDelete(0, oversold_zone_id);
-    ObjectDelete(0, overbought_line_id);
-    ObjectDelete(0, oversold_line_id);
+
+   // Clean up all objects
+   ObjectDelete(0, overbought_zone_id);
+   ObjectDelete(0, oversold_zone_id);
+   ObjectDelete(0, overbought_line_id);
+   ObjectDelete(0, oversold_line_id);
+   ObjectDelete(0, info_panel_id);
+   ObjectDelete(0, pattern_text_id);
+   ObjectDelete(0, datetime_text_id);
+   ObjectDelete(0, username_text_id);
+   ObjectDelete(0, risk_text_id);
+   ObjectDelete(0, trend_text_id);
+   ObjectDelete(0, zones_text_id);
+   
+   Print(GetLocalizedText("indicator_finished"));
     
     string username = GetComputerUserName();
     string datetime_str = GetCurrentDateTime();
