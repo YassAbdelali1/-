@@ -108,6 +108,7 @@ bool is_russian_system = false;
 int last_calculated = 0; // Добавляем для отслеживания пересчета
 datetime last_alert_time = 0;
 int alert_delay = 300; // 5 минут между алертами
+datetime indicator_load_time = 0;  // Время загрузки индикатора - ДОБАВЛЕНО
 
 // Для мини-дисплея информации
 string info_panel_id = "VFI_InfoPanel";
@@ -433,14 +434,18 @@ string GetSessionUptime()
 }
 
 //+------------------------------------------------------------------+
-//| Send Alert Function                                              |
+//| Send Alert Function - ИСПРАВЛЕНО                                |
 //+------------------------------------------------------------------+
-void SendAlert(string message)
+void SendAlert(string message, datetime signal_time)
 {
     datetime current_time = TimeCurrent();
     
     // Проверяем, прошло ли достаточно времени с предыдущего алерта
     if(current_time - last_alert_time < alert_delay)
+        return;
+    
+    // Пропускаем алерты для исторических баров (до загрузки индикатора)
+    if(signal_time < indicator_load_time)
         return;
         
     // Сохраняем время отправки алерта
@@ -997,8 +1002,8 @@ void UpdateInfoPanel(int bar_index, const datetime &time[])
         // Получим цены напрямую из буфера
         double close[];
         int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close);
-        
-            if(copied > 0)
+
+        if(copied > 0)
         {
             if(IsDoubleBottom(i, VFI_Length))
             {
@@ -1208,6 +1213,8 @@ int OnInit()
 {
     // Инициализация значений пользователя и времени
     session_start_time = TimeGMT();
+    indicator_load_time = TimeCurrent();  // Устанавливаем время загрузки индикатора
+    Print("Indicator loaded at: ", TimeToString(indicator_load_time));
     
     // Validate input parameters
     if(VFI_Length < 10)
@@ -1989,145 +1996,145 @@ int OnCalculate(const int rates_total,
         }
         
         //--- calculate histogram
-if(ShowHisto)
-    Histogram_Buffer[i] = VFI_Buffer[i] - VFI_EMA_Buffer[i];
-else
-    Histogram_Buffer[i] = EMPTY_VALUE;
-    
-//--- Calculate buy and sell signals
-Buy_Signal_Buffer[i] = EMPTY_VALUE;
-Sell_Signal_Buffer[i] = EMPTY_VALUE;
-
-if(i > 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i-1] != EMPTY_VALUE && 
-   VFI_EMA_Buffer[i] != EMPTY_VALUE && VFI_EMA_Buffer[i-1] != EMPTY_VALUE)
-{
-    // Buy signal: VFI crosses above EMA
-    bool buy_signal = (VFI_Buffer[i-1] < VFI_EMA_Buffer[i-1] && VFI_Buffer[i] > VFI_EMA_Buffer[i]);
-    
-    if(buy_signal)
-    {
-        Buy_Signal_Buffer[i] = VFI_Buffer[i] - 0.0005; // Place slightly below the VFI line
-        
-        // Отправка алерта на сигнал покупки
-        if(EnableAlerts || EnableNotifications)
-        {
-            string alert_message = Symbol() + ": " + GetLocalizedText("buy_signal_detected") + " @ " +
-                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-            SendAlert(alert_message);
-        }
-    }
-    
-    // Sell signal: VFI crosses below EMA
-    bool sell_signal = (VFI_Buffer[i-1] > VFI_EMA_Buffer[i-1] && VFI_Buffer[i] < VFI_EMA_Buffer[i]);
-    
-    if(sell_signal)
-    {
-        Sell_Signal_Buffer[i] = VFI_Buffer[i] + 0.0005; // Place slightly above the VFI line
-        
-        // Отправка алерта на сигнал продажи
-        if(EnableAlerts || EnableNotifications)
-        {
-            string alert_message = Symbol() + ": " + GetLocalizedText("sell_signal_detected") + " @ " +
-                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-            SendAlert(alert_message);
-        }
-    }
-}
-
-//--- Pattern Detection (если включено)
-if(ShowPatterns && i > VFI_Length * 2)
-{
-    // Сохраняем информацию о паттернах для информационной панели, но не создаем стрелки на графике
-    
-    // Определение двойного дна
-    if(IsDoubleBottom(i, VFI_Length))
-    {
-        DoubleBottom_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-        
-        // Отправка алерта на паттерн двойного дна
-        if(EnableAlerts || EnableNotifications)
-        {
-            string alert_message = Symbol() + ": " + GetLocalizedText("double_bottom_detected") + " @ " +
-                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-            SendAlert(alert_message);
-        }
-    }
-    
-    // Определение двойной вершины
-    if(IsDoubleTop(i, VFI_Length))
-    {
-        DoubleTop_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-        
-        // Отправка алерта на паттерн двойной вершины
-        if(EnableAlerts || EnableNotifications)
-        {
-            string alert_message = Symbol() + ": " + GetLocalizedText("double_top_detected") + " @ " +
-                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-            SendAlert(alert_message);
-        }
-    }
-    
-    // Определение дивергенции - используем непосредственно close[], а не ChartClose()
-    double close_data[];
-    int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close_data);
-    
-    if(copied > 0)
-    {
-        if(IsDivergence(i, VFI_Length, close_data))
-        {
-            Divergence_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
+        if(ShowHisto)
+            Histogram_Buffer[i] = VFI_Buffer[i] - VFI_EMA_Buffer[i];
+        else
+            Histogram_Buffer[i] = EMPTY_VALUE;
             
-            // Отправка алерта на паттерн дивергенции
-            if(EnableAlerts || EnableNotifications)
+        //--- Calculate buy and sell signals
+        Buy_Signal_Buffer[i] = EMPTY_VALUE;
+        Sell_Signal_Buffer[i] = EMPTY_VALUE;
+        
+        if(i > 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i-1] != EMPTY_VALUE && 
+           VFI_EMA_Buffer[i] != EMPTY_VALUE && VFI_EMA_Buffer[i-1] != EMPTY_VALUE)
+        {
+            // Buy signal: VFI crosses above EMA
+            bool buy_signal = (VFI_Buffer[i-1] < VFI_EMA_Buffer[i-1] && VFI_Buffer[i] > VFI_EMA_Buffer[i]);
+            
+            if(buy_signal)
             {
-                string alert_message = Symbol() + ": " + GetLocalizedText("divergence_detected") + " @ " +
-                                    TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                SendAlert(alert_message);
+                Buy_Signal_Buffer[i] = VFI_Buffer[i] - 0.0005; // Place slightly below the VFI line
+                
+                // Отправка алерта на сигнал покупки
+                if(EnableAlerts || EnableNotifications)
+                {
+                    string alert_message = Symbol() + ": " + GetLocalizedText("buy_signal_detected") + " @ " +
+                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+                    SendAlert(alert_message, time[i]);
+                }
+            }
+            
+            // Sell signal: VFI crosses below EMA
+            bool sell_signal = (VFI_Buffer[i-1] > VFI_EMA_Buffer[i-1] && VFI_Buffer[i] < VFI_EMA_Buffer[i]);
+            
+            if(sell_signal)
+            {
+                Sell_Signal_Buffer[i] = VFI_Buffer[i] + 0.0005; // Place slightly above the VFI line
+                
+                // Отправка алерта на сигнал продажи
+                if(EnableAlerts || EnableNotifications)
+                {
+                    string alert_message = Symbol() + ": " + GetLocalizedText("sell_signal_detected") + " @ " +
+                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+                    SendAlert(alert_message, time[i]);
+                }
             }
         }
+        
+        //--- Pattern Detection (если включено)
+        if(ShowPatterns && i > VFI_Length * 2)
+        {
+            // Сохраняем информацию о паттернах для информационной панели, но не создаем стрелки на графике
+            
+            // Определение двойного дна
+            if(IsDoubleBottom(i, VFI_Length))
+            {
+                DoubleBottom_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
+                
+                // Отправка алерта на паттерн двойного дна
+                if(EnableAlerts || EnableNotifications)
+                {
+                    string alert_message = Symbol() + ": " + GetLocalizedText("double_bottom_detected") + " @ " +
+                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+                    SendAlert(alert_message, time[i]);
+                }
+            }
+            
+            // Определение двойной вершины
+            if(IsDoubleTop(i, VFI_Length))
+            {
+                DoubleTop_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
+                
+                // Отправка алерта на паттерн двойной вершины
+                if(EnableAlerts || EnableNotifications)
+                {
+                    string alert_message = Symbol() + ": " + GetLocalizedText("double_top_detected") + " @ " +
+                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+                    SendAlert(alert_message, time[i]);
+                }
+            }
+            
+            // Определение дивергенции - используем непосредственно close[], а не ChartClose()
+            double close_data[];
+            int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close_data);
+            
+            if(copied > 0)
+            {
+                if(IsDivergence(i, VFI_Length, close_data))
+                {
+                    Divergence_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
+                    
+                    // Отправка алерта на паттерн дивергенции
+                    if(EnableAlerts || EnableNotifications)
+                    {
+                        string alert_message = Symbol() + ": " + GetLocalizedText("divergence_detected") + " @ " +
+                                            TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+                        SendAlert(alert_message, time[i]);
+                    }
+                }
+            }
+        }
+        
+        //--- Risk Assessment
+        double risk_value = 0.0;
+        ENUM_RISK_LEVEL risk_level = CalculateRiskLevel(i, RiskAssessmentPeriod, risk_value);
+        
+        // Устанавливаем значение и цвет риска
+        Risk_Buffer[i] = risk_value * 0.5; // Масштабируем для отображения
+        Risk_Colors_Buffer[i] = (double)risk_level;
+        
+        //--- Trend Assessment
+        double trend_strength = 0;
+        ENUM_TREND_DIRECTION trend_direction = DetermineTrend(i, TrendPeriod, trend_strength);
+        trend_buffer[i] = (double)trend_direction * trend_strength; // Записываем в буфер тренда
+        
+        // Применяем динамическое изменение цветов
+        if(EnableDynamicColors)
+            UpdateDynamicColors(i);
     }
-}
-
-//--- Risk Assessment
-double risk_value = 0.0;
-ENUM_RISK_LEVEL risk_level = CalculateRiskLevel(i, RiskAssessmentPeriod, risk_value);
-
-// Устанавливаем значение и цвет риска
-Risk_Buffer[i] = risk_value * 0.5; // Масштабируем для отображения
-Risk_Colors_Buffer[i] = (double)risk_level;
-
-//--- Trend Assessment
-double trend_strength = 0;
-ENUM_TREND_DIRECTION trend_direction = DetermineTrend(i, TrendPeriod, trend_strength);
-trend_buffer[i] = (double)trend_direction * trend_strength; // Записываем в буфер тренда
-
-// Применяем динамическое изменение цветов
-if(EnableDynamicColors)
-    UpdateDynamicColors(i);
-}
-
-// Периодически пересчитываем уровни перекупленности/перепроданности
-// На первой итерации или если уровни еще не установлены, обязательно пересчитываем
-if(prev_calculated == 0 || dynamic_overbought_level == 0 || dynamic_oversold_level == 0)
-{
-    CalculateOverboughtOversoldLevels(rates_total - 1);
-}
-else if((rates_total - 1) % 100 == 0) // Пересчитываем каждые 100 баров
-{
-    CalculateOverboughtOversoldLevels(rates_total - 1);
-}
-
-// После основных расчетов обновляем зоны
-UpdateZoneObjects(rates_total-1);
-
-// После основных расчетов обновляем информационную панель
-if(ShowInfoPanel)
-{
-    UpdateInfoPanel(rates_total-1, time);
-}
-
-last_calculated = rates_total;
-return(rates_total);
+    
+    // Периодически пересчитываем уровни перекупленности/перепроданности
+    // На первой итерации или если уровни еще не установлены, обязательно пересчитываем
+    if(prev_calculated == 0 || dynamic_overbought_level == 0 || dynamic_oversold_level == 0)
+    {
+        CalculateOverboughtOversoldLevels(rates_total - 1);
+    }
+    else if((rates_total - 1) % 100 == 0) // Пересчитываем каждые 100 баров
+    {
+        CalculateOverboughtOversoldLevels(rates_total - 1);
+    }
+    
+    // После основных расчетов обновляем зоны
+    UpdateZoneObjects(rates_total-1);
+    
+    // После основных расчетов обновляем информационную панель
+    if(ShowInfoPanel)
+    {
+        UpdateInfoPanel(rates_total-1, time);
+    }
+    
+    last_calculated = rates_total;
+    return(rates_total);
 }
 
 //+------------------------------------------------------------------+
