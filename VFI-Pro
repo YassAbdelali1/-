@@ -998,7 +998,7 @@ void UpdateInfoPanel(int bar_index, const datetime &time[])
         double close[];
         int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close);
         
-        if(copied > 0)
+            if(copied > 0)
         {
             if(IsDoubleBottom(i, VFI_Length))
             {
@@ -1346,20 +1346,16 @@ void CheckVolumeData()
     string username = GetComputerUserName();
     string datetime_str = GetCurrentDateTime();
     
-    Print("╔══════════════════════════════════════════════════════════════════╗");
-    Print("║", GetLocalizedText("volume_check_header"), "║");
-    Print("╠══════════════════════════════════════════════════════════════════╣");
-    Print("║ ", GetLocalizedText("symbol"), ": ", symbol);
-    Print("║ ", GetLocalizedText("datetime"), ": ", datetime_str, " UTC");
-    Print("║ ", GetLocalizedText("user"), ": ", username);
-    Print("╠══════════════════════════════════════════════════════════════════╣");
+    Print(GetLocalizedText("volume_check_header"));
+    Print(" ", GetLocalizedText("symbol"), ": ", symbol);
+    Print(" ", GetLocalizedText("datetime"), ": ", datetime_str, " UTC");
+    Print(" ", GetLocalizedText("user"), ": ", username);
     
     // Debug terminal paths
-    Print("║ ", GetLocalizedText("terminal_paths"), ":");
-    Print("║   TERMINAL_PATH: ", TerminalInfoString(TERMINAL_PATH));
-    Print("║   TERMINAL_DATA_PATH: ", TerminalInfoString(TERMINAL_DATA_PATH));
-    Print("║   TERMINAL_COMMONDATA_PATH: ", TerminalInfoString(TERMINAL_COMMONDATA_PATH));
-    Print("╠══════════════════════════════════════════════════════════════════╣");
+    Print(" ", GetLocalizedText("terminal_paths"), ":");
+    Print("   TERMINAL_PATH: ", TerminalInfoString(TERMINAL_PATH));
+    Print("   TERMINAL_DATA_PATH: ", TerminalInfoString(TERMINAL_DATA_PATH));
+    Print("   TERMINAL_COMMONDATA_PATH: ", TerminalInfoString(TERMINAL_COMMONDATA_PATH));
     
     // Check execution type
     ENUM_SYMBOL_TRADE_EXECUTION execution = (ENUM_SYMBOL_TRADE_EXECUTION)SymbolInfoInteger(symbol, SYMBOL_TRADE_EXEMODE);
@@ -1372,7 +1368,7 @@ void CheckVolumeData()
         case SYMBOL_TRADE_EXECUTION_EXCHANGE: exec_type = "Exchange"; break;
         default: exec_type = "Unknown";
     }
-    Print("║ ", GetLocalizedText("execution_type"), ": ", exec_type);
+    Print(" ", GetLocalizedText("execution_type"), ": ", exec_type);
     
     // Get test data
     MqlRates rates[];
@@ -1380,13 +1376,11 @@ void CheckVolumeData()
     
     if(copied <= 0)
     {
-        Print("║ ", GetLocalizedText("error_no_data"));
-        Print("╚══════════════════════════════════════════════════════════════════╝");
+        Print(" ", GetLocalizedText("error_no_data"));
         return;
     }
     
-    Print("║ ", GetLocalizedText("bars_analyzed"), ": ", copied);
-    Print("╠══════════════════════════════════════════════════════════════════╣");
+    Print(" ", GetLocalizedText("bars_analyzed"), ": ", copied);
     
     // Analyze tick volumes
     long total_tick_volume = 0;
@@ -1435,11 +1429,11 @@ void CheckVolumeData()
     
     // Tick volume results
     double avg_tick_volume = (double)total_tick_volume / copied;
-    Print("║ ", GetLocalizedText("tick_volumes"), ":");
-    Print("║   ", GetLocalizedText("average"), ": ", (long)avg_tick_volume);
-    Print("║   ", GetLocalizedText("maximum"), ": ", max_tick_volume);
-    Print("║   ", GetLocalizedText("minimum"), ": ", min_tick_volume);
-    Print("║   ", GetLocalizedText("zero_bars"), ": ", zero_tick_volumes, " (", 
+    Print(" ", GetLocalizedText("tick_volumes"), ":");
+    Print("   ", GetLocalizedText("average"), ": ", (long)avg_tick_volume);
+    Print("   ", GetLocalizedText("maximum"), ": ", max_tick_volume);
+    Print("   ", GetLocalizedText("minimum"), ": ", min_tick_volume);
+    Print("   ", GetLocalizedText("zero_bars"), ": ", zero_tick_volumes, " (", 
           MathRound(zero_tick_volumes * 100.0 / copied), "%)");
     
     // Real volume results
@@ -1447,19 +1441,17 @@ void CheckVolumeData()
     if(has_real_volumes)
     {
         double avg_real_volume = (double)total_real_volume / (copied - zero_real_volumes);
-        Print("║ ", GetLocalizedText("real_volumes"), ":");
-        Print("║   ", GetLocalizedText("average"), ": ", (long)avg_real_volume);
-        Print("║   ", GetLocalizedText("maximum"), ": ", max_real_volume);
-        Print("║   ", GetLocalizedText("minimum"), ": ", min_real_volume);
-        Print("║   ", GetLocalizedText("zero_bars"), ": ", zero_real_volumes, " (", 
+        Print(" ", GetLocalizedText("real_volumes"), ":");
+        Print("   ", GetLocalizedText("average"), ": ", (long)avg_real_volume);
+        Print("   ", GetLocalizedText("maximum"), ": ", max_real_volume);
+        Print("   ", GetLocalizedText("minimum"), ": ", min_real_volume);
+        Print("   ", GetLocalizedText("zero_bars"), ": ", zero_real_volumes, " (", 
               MathRound(zero_real_volumes * 100.0 / copied), "%)");
     }
     else
     {
-        Print("║ ", GetLocalizedText("real_volumes_unavailable"));
+        Print(" ", GetLocalizedText("real_volumes_unavailable"));
     }
-    
-    Print("╠══════════════════════════════════════════════════════════════════╣");
     
     // Data quality assessment
     string quality_assessment = "";
@@ -1491,40 +1483,37 @@ void CheckVolumeData()
         recommendation = GetLocalizedText("will_work_correctly");
     }
     
-    Print("║ ", GetLocalizedText("quality_assessment"), ": ", quality_assessment);
-    Print("║ ", GetLocalizedText("recommendation"), ": ", recommendation);
+    Print(" ", GetLocalizedText("quality_assessment"), ": ", quality_assessment);
+    Print(" ", GetLocalizedText("recommendation"), ": ", recommendation);
     
     // Indicator settings
-    Print("╠══════════════════════════════════════════════════════════════════╣");
-    Print("║ ", GetLocalizedText("indicator_settings"), ":");
+    Print(" ", GetLocalizedText("indicator_settings"), ":");
     
     if(has_real_volumes && UseRealVolume)
     {
-        Print("║   ", GetLocalizedText("will_use_real"));
+        Print("   ", GetLocalizedText("will_use_real"));
     }
     else
     {
-        Print("║   ", GetLocalizedText("will_use_tick"));
+        Print("   ", GetLocalizedText("will_use_tick"));
     }
     
-    Print("║   VFI Length: ", VFI_Length);
-    Print("║   Coefficient: ", Coef);
-    Print("║   Max Volume Cutoff: ", VCoef);
-    Print("║   Signal Length: ", SignalLength);
-    Print("║   Trend Period: ", TrendPeriod);
-    Print("║   Zones Auto Calculation Period: ", ZonesAutoCalculationPeriod);
-    Print("║   Zone Percentile: ", ZonePercentile);
-    Print("║   Zone Transparency: ", ZoneTransparency);
-    Print("║   Smooth VFI: ", SmoothVFI ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Show Histogram: ", ShowHisto ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Show Patterns: ", ShowPatterns ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Enable Alerts: ", EnableAlerts ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Enable Notifications: ", EnableNotifications ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Enable Dynamic Colors: ", EnableDynamicColors ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Show Info Panel: ", ShowInfoPanel ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("║   Risk Assessment Period: ", RiskAssessmentPeriod);
-    
-    Print("╚══════════════════════════════════════════════════════════════════╝");
+    Print("   VFI Length: ", VFI_Length);
+    Print("   Coefficient: ", Coef);
+    Print("   Max Volume Cutoff: ", VCoef);
+    Print("   Signal Length: ", SignalLength);
+    Print("   Trend Period: ", TrendPeriod);
+    Print("   Zones Auto Calculation Period: ", ZonesAutoCalculationPeriod);
+    Print("   Zone Percentile: ", ZonePercentile);
+    Print("   Zone Transparency: ", ZoneTransparency);
+    Print("   Smooth VFI: ", SmoothVFI ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Show Histogram: ", ShowHisto ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Show Patterns: ", ShowPatterns ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Enable Alerts: ", EnableAlerts ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Enable Notifications: ", EnableNotifications ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Enable Dynamic Colors: ", EnableDynamicColors ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Show Info Panel: ", ShowInfoPanel ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("   Risk Assessment Period: ", RiskAssessmentPeriod);
 }
 
 //+------------------------------------------------------------------+
@@ -2000,145 +1989,145 @@ int OnCalculate(const int rates_total,
         }
         
         //--- calculate histogram
-        if(ShowHisto)
-            Histogram_Buffer[i] = VFI_Buffer[i] - VFI_EMA_Buffer[i];
-        else
-            Histogram_Buffer[i] = EMPTY_VALUE;
-            
-        //--- Calculate buy and sell signals
-        Buy_Signal_Buffer[i] = EMPTY_VALUE;
-        Sell_Signal_Buffer[i] = EMPTY_VALUE;
+if(ShowHisto)
+    Histogram_Buffer[i] = VFI_Buffer[i] - VFI_EMA_Buffer[i];
+else
+    Histogram_Buffer[i] = EMPTY_VALUE;
+    
+//--- Calculate buy and sell signals
+Buy_Signal_Buffer[i] = EMPTY_VALUE;
+Sell_Signal_Buffer[i] = EMPTY_VALUE;
+
+if(i > 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i-1] != EMPTY_VALUE && 
+   VFI_EMA_Buffer[i] != EMPTY_VALUE && VFI_EMA_Buffer[i-1] != EMPTY_VALUE)
+{
+    // Buy signal: VFI crosses above EMA
+    bool buy_signal = (VFI_Buffer[i-1] < VFI_EMA_Buffer[i-1] && VFI_Buffer[i] > VFI_EMA_Buffer[i]);
+    
+    if(buy_signal)
+    {
+        Buy_Signal_Buffer[i] = VFI_Buffer[i] - 0.0005; // Place slightly below the VFI line
         
-        if(i > 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i-1] != EMPTY_VALUE && 
-           VFI_EMA_Buffer[i] != EMPTY_VALUE && VFI_EMA_Buffer[i-1] != EMPTY_VALUE)
+        // Отправка алерта на сигнал покупки
+        if(EnableAlerts || EnableNotifications)
         {
-            // Buy signal: VFI crosses above EMA
-            bool buy_signal = (VFI_Buffer[i-1] < VFI_EMA_Buffer[i-1] && VFI_Buffer[i] > VFI_EMA_Buffer[i]);
+            string alert_message = Symbol() + ": " + GetLocalizedText("buy_signal_detected") + " @ " +
+                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+            SendAlert(alert_message);
+        }
+    }
+    
+    // Sell signal: VFI crosses below EMA
+    bool sell_signal = (VFI_Buffer[i-1] > VFI_EMA_Buffer[i-1] && VFI_Buffer[i] < VFI_EMA_Buffer[i]);
+    
+    if(sell_signal)
+    {
+        Sell_Signal_Buffer[i] = VFI_Buffer[i] + 0.0005; // Place slightly above the VFI line
+        
+        // Отправка алерта на сигнал продажи
+        if(EnableAlerts || EnableNotifications)
+        {
+            string alert_message = Symbol() + ": " + GetLocalizedText("sell_signal_detected") + " @ " +
+                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+            SendAlert(alert_message);
+        }
+    }
+}
+
+//--- Pattern Detection (если включено)
+if(ShowPatterns && i > VFI_Length * 2)
+{
+    // Сохраняем информацию о паттернах для информационной панели, но не создаем стрелки на графике
+    
+    // Определение двойного дна
+    if(IsDoubleBottom(i, VFI_Length))
+    {
+        DoubleBottom_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
+        
+        // Отправка алерта на паттерн двойного дна
+        if(EnableAlerts || EnableNotifications)
+        {
+            string alert_message = Symbol() + ": " + GetLocalizedText("double_bottom_detected") + " @ " +
+                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+            SendAlert(alert_message);
+        }
+    }
+    
+    // Определение двойной вершины
+    if(IsDoubleTop(i, VFI_Length))
+    {
+        DoubleTop_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
+        
+        // Отправка алерта на паттерн двойной вершины
+        if(EnableAlerts || EnableNotifications)
+        {
+            string alert_message = Symbol() + ": " + GetLocalizedText("double_top_detected") + " @ " +
+                                  TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+            SendAlert(alert_message);
+        }
+    }
+    
+    // Определение дивергенции - используем непосредственно close[], а не ChartClose()
+    double close_data[];
+    int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close_data);
+    
+    if(copied > 0)
+    {
+        if(IsDivergence(i, VFI_Length, close_data))
+        {
+            Divergence_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
             
-            if(buy_signal)
+            // Отправка алерта на паттерн дивергенции
+            if(EnableAlerts || EnableNotifications)
             {
-                Buy_Signal_Buffer[i] = VFI_Buffer[i] - 0.0005; // Place slightly below the VFI line
-                
-                // Отправка алерта на сигнал покупки
-                if(EnableAlerts || EnableNotifications)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("buy_signal_detected") + " @ " +
-                                          TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message);
-                }
-            }
-            
-            // Sell signal: VFI crosses below EMA
-            bool sell_signal = (VFI_Buffer[i-1] > VFI_EMA_Buffer[i-1] && VFI_Buffer[i] < VFI_EMA_Buffer[i]);
-            
-            if(sell_signal)
-            {
-                Sell_Signal_Buffer[i] = VFI_Buffer[i] + 0.0005; // Place slightly above the VFI line
-                
-                // Отправка алерта на сигнал продажи
-                if(EnableAlerts || EnableNotifications)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("sell_signal_detected") + " @ " +
-                                          TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message);
-                }
+                string alert_message = Symbol() + ": " + GetLocalizedText("divergence_detected") + " @ " +
+                                    TimeToString(time[i], TIME_DATE|TIME_MINUTES);
+                SendAlert(alert_message);
             }
         }
-        
-        //--- Pattern Detection (если включено)
-        if(ShowPatterns && i > VFI_Length * 2)
-        {
-            // Сохраняем информацию о паттернах для информационной панели, но не создаем стрелки на графике
-            
-            // Определение двойного дна
-            if(IsDoubleBottom(i, VFI_Length))
-            {
-                DoubleBottom_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-                
-                // Отправка алерта на паттерн двойного дна
-                if(EnableAlerts || EnableNotifications)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("double_bottom_detected") + " @ " +
-                                          TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message);
-                }
-            }
-            
-            // Определение двойной вершины
-            if(IsDoubleTop(i, VFI_Length))
-            {
-                DoubleTop_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-                
-                // Отправка алерта на паттерн двойной вершины
-                if(EnableAlerts || EnableNotifications)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("double_top_detected") + " @ " +
-                                          TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message);
-                }
-            }
-            
-            // Определение дивергенции - используем непосредственно close[], а не ChartClose()
-            double close_data[];
-            int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close_data);
-            
-            if(copied > 0)
-            {
-                if(IsDivergence(i, VFI_Length, close_data))
-                {
-                    Divergence_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-                    
-                    // Отправка алерта на паттерн дивергенции
-                    if(EnableAlerts || EnableNotifications)
-                    {
-                        string alert_message = Symbol() + ": " + GetLocalizedText("divergence_detected") + " @ " +
-                                            TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                        SendAlert(alert_message);
-                    }
-                }
-            }
-        }
-        
-        //--- Risk Assessment
-        double risk_value = 0.0;
-        ENUM_RISK_LEVEL risk_level = CalculateRiskLevel(i, RiskAssessmentPeriod, risk_value);
-        
-        // Устанавливаем значение и цвет риска
-        Risk_Buffer[i] = risk_value * 0.5; // Масштабируем для отображения
-        Risk_Colors_Buffer[i] = (double)risk_level;
-        
-        //--- Trend Assessment
-        double trend_strength = 0;
-        ENUM_TREND_DIRECTION trend_direction = DetermineTrend(i, TrendPeriod, trend_strength);
-        trend_buffer[i] = (double)trend_direction * trend_strength; // Записываем в буфер тренда
-        
-        // Применяем динамическое изменение цветов
-        if(EnableDynamicColors)
-            UpdateDynamicColors(i);
     }
-    
-    // Периодически пересчитываем уровни перекупленности/перепроданности
-    // На первой итерации или если уровни еще не установлены, обязательно пересчитываем
-    if(prev_calculated == 0 || dynamic_overbought_level == 0 || dynamic_oversold_level == 0)
-    {
-        CalculateOverboughtOversoldLevels(rates_total - 1);
-    }
-    else if((rates_total - 1) % 100 == 0) // Пересчитываем каждые 100 баров
-    {
-        CalculateOverboughtOversoldLevels(rates_total - 1);
-    }
-    
-    // После основных расчетов обновляем зоны
-    UpdateZoneObjects(rates_total-1);
-    
-    // После основных расчетов обновляем информационную панель
-    if(ShowInfoPanel)
-    {
-        UpdateInfoPanel(rates_total-1, time);
-    }
-    
-    last_calculated = rates_total;
-    return(rates_total);
+}
+
+//--- Risk Assessment
+double risk_value = 0.0;
+ENUM_RISK_LEVEL risk_level = CalculateRiskLevel(i, RiskAssessmentPeriod, risk_value);
+
+// Устанавливаем значение и цвет риска
+Risk_Buffer[i] = risk_value * 0.5; // Масштабируем для отображения
+Risk_Colors_Buffer[i] = (double)risk_level;
+
+//--- Trend Assessment
+double trend_strength = 0;
+ENUM_TREND_DIRECTION trend_direction = DetermineTrend(i, TrendPeriod, trend_strength);
+trend_buffer[i] = (double)trend_direction * trend_strength; // Записываем в буфер тренда
+
+// Применяем динамическое изменение цветов
+if(EnableDynamicColors)
+    UpdateDynamicColors(i);
+}
+
+// Периодически пересчитываем уровни перекупленности/перепроданности
+// На первой итерации или если уровни еще не установлены, обязательно пересчитываем
+if(prev_calculated == 0 || dynamic_overbought_level == 0 || dynamic_oversold_level == 0)
+{
+    CalculateOverboughtOversoldLevels(rates_total - 1);
+}
+else if((rates_total - 1) % 100 == 0) // Пересчитываем каждые 100 баров
+{
+    CalculateOverboughtOversoldLevels(rates_total - 1);
+}
+
+// После основных расчетов обновляем зоны
+UpdateZoneObjects(rates_total-1);
+
+// После основных расчетов обновляем информационную панель
+if(ShowInfoPanel)
+{
+    UpdateInfoPanel(rates_total-1, time);
+}
+
+last_calculated = rates_total;
+return(rates_total);
 }
 
 //+------------------------------------------------------------------+
@@ -2207,10 +2196,8 @@ void OnDeinit(const int reason)
     string username = GetComputerUserName();
     string datetime_str = GetCurrentDateTime();
     
-    Print("╔══════════════════════════════════════════════════════════════════╗");
-    Print("║", GetLocalizedText("indicator_finished"), "║");
-    Print("║ ", GetLocalizedText("reason"), ": ", reason);
-    Print("║ ", GetLocalizedText("time"), ": ", datetime_str, " UTC");
-    Print("║ ", GetLocalizedText("user"), ": ", username);
-    Print("╚══════════════════════════════════════════════════════════════════╝");
+    Print(GetLocalizedText("indicator_finished"));
+    Print(" ", GetLocalizedText("reason"), ": ", reason);
+    Print(" ", GetLocalizedText("time"), ": ", datetime_str, " UTC");
+    Print(" ", GetLocalizedText("user"), ": ", username);
 }
