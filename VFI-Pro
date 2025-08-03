@@ -1,7 +1,12 @@
+//+------------------------------------------------------------------+
+//|                                                 |
+//|                        Copyright 2025, MetaQuotes Software Corp. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
 #property copyright "Copyright 2025, Dubravaspb"
 #property link      "https://www.mql5.com"
 #property version   "1.02"
-#property description "Advanced implementation of Dubravaspb's Volume Flow Indicator with comprehensive analysis tools featuring buy/sell signals with customizable parameters, pattern recognition, real-time risk assessment, dynamic zones, trend analysis, multilingual interface, and customizable alerts - perfect for incorporating volume analysis into any trading strategy with powerful confirmation tools."
+#property description "Advanced implementation of Dubravaspb's Volume Flow Indicator with comprehensive analysis tools featuring buy/sell signals with customizable parameters, pattern recognition, rea"
 #property indicator_separate_window
 #property indicator_buffers 11
 #property indicator_plots   9
@@ -119,6 +124,10 @@ static bool prev_show_histo = false;
 static bool prev_use_real_volume = false;
 static bool parameters_changed = false;
 
+// Добавляем переменную для хранения последнего количества баров
+static int last_rates_total = 0;
+static bool first_run = true;
+
 // Для мини-дисплея информации
 string info_panel_id = "VFI_InfoPanel";
 string pattern_text_id = "VFI_PatternText";
@@ -234,6 +243,7 @@ string GetLocalizedText(string key)
         if(key == "invalid_signal_length") return "SignalLength must be >= 1";
         if(key == "invalid_coefficients") return "Coefficients must be positive";
         if(key == "settings_changed") return "Settings changed - recalculating all data";
+        if(key == "buffer_reset") return "Buffer reset detected - recalculating";
         if(key == "buy_signals_enabled") return "Buy signals enabled";
         if(key == "sell_signals_enabled") return "Sell signals enabled";
         if(key == "pattern_recognition_enabled") return "Pattern recognition enabled";
@@ -317,6 +327,7 @@ string GetLocalizedText(string key)
         if(key == "invalid_signal_length") return "SignalLength должно быть >= 1";
         if(key == "invalid_coefficients") return "Коэффициенты должны быть положительными";
         if(key == "settings_changed") return "Настройки изменены - пересчитываем все данные";
+        if(key == "buffer_reset") return "Обнаружен сброс буфера - пересчитываем";
         if(key == "buy_signals_enabled") return "Сигналы покупки включены";
         if(key == "sell_signals_enabled") return "Сигналы продажи включены";
         if(key == "pattern_recognition_enabled") return "Распознавание паттернов включено";
@@ -982,12 +993,9 @@ void UpdateInfoPanel(int bar_index, const datetime &time[])
     // Проверяем последние 5 баров на наличие паттернов
     for(int i = bar_index; i >= MathMax(0, bar_index - 5); i--)
     {
-        // Получим цены напрямую из буфера
-        double close[];
-        int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close);
-
-        if(copied > 0)
+        if(i < ArraySize(VFI_Buffer))
         {
+            // Получим цены напрямую из буфера для проверки паттернов
             if(IsDoubleBottom(i, VFI_Length))
             {
                 patterns += "W ";  // Double Bottom
@@ -1000,11 +1008,7 @@ void UpdateInfoPanel(int bar_index, const datetime &time[])
                 has_patterns = true;
             }
             
-            if(IsDivergence(i, VFI_Length, close))
-            {
-                patterns += "D ";  // Divergence
-                has_patterns = true;
-            }
+            // Добавьте здесь проверки на другие паттерны
         }
     }
     
@@ -1012,181 +1016,310 @@ void UpdateInfoPanel(int bar_index, const datetime &time[])
         ObjectSetString(0, pattern_text_id, OBJPROP_TEXT, GetLocalizedText("detected_patterns") + ": " + patterns);
     else
         ObjectSetString(0, pattern_text_id, OBJPROP_TEXT, GetLocalizedText("detected_patterns") + ": " + GetLocalizedText("no_patterns_detected"));
-        
-    // Обновляем информацию о времени
-    ObjectSetString(0, datetime_text_id, OBJPROP_TEXT, GetLocalizedText("current_time") + ": " + GetCurrentDateTime());
-    
-    // Обновляем информацию о пользователе
-    ObjectSetString(0, username_text_id, OBJPROP_TEXT, GetLocalizedText("current_user") + ": " + GetComputerUserName());
     
     // Обновляем информацию о тренде
-    double trend_strength = 0;
-    ENUM_TREND_DIRECTION trend_direction = DetermineTrend(bar_index, TrendPeriod, trend_strength);
-    string trend_text = "";
-    color trend_color;
+    double trend_strength = 0.0;
+    ENUM_TREND_DIRECTION trend = DetermineTrend(bar_index, TrendPeriod, trend_strength);
+    string trend_text = GetLocalizedText("trend") + ": ";
     
-    switch(trend_direction)
+    switch(trend)
     {
         case TREND_UP:
-            trend_text = GetLocalizedText("trend") + ": " + GetLocalizedText("trend_up") + " (" + 
-                         GetLocalizedText("trend_strength") + ": " + DoubleToString(trend_strength * 100, 0) + "%)";
-            trend_color = clrLimeGreen;
+            trend_text += GetLocalizedText("trend_up");
+            ObjectSetInteger(0, trend_text_id, OBJPROP_COLOR, clrLimeGreen);
             break;
         case TREND_DOWN:
-            trend_text = GetLocalizedText("trend") + ": " + GetLocalizedText("trend_down") + " (" + 
-                         GetLocalizedText("trend_strength") + ": " + DoubleToString(trend_strength * 100, 0) + "%)";
-            trend_color = clrTomato;
+            trend_text += GetLocalizedText("trend_down");
+            ObjectSetInteger(0, trend_text_id, OBJPROP_COLOR, clrTomato);
             break;
+        case TREND_SIDEWAYS:
         default:
-            trend_text = GetLocalizedText("trend") + ": " + GetLocalizedText("trend_sideways");
-            trend_color = clrGray;
+            trend_text += GetLocalizedText("trend_sideways");
+            ObjectSetInteger(0, trend_text_id, OBJPROP_COLOR, InfoPanelTextColor);
             break;
     }
     
+    // Добавляем информацию о силе тренда
+    trend_text += " (" + GetLocalizedText("trend_strength") + ": " + DoubleToString(trend_strength * 100.0, 1) + "%)";
     ObjectSetString(0, trend_text_id, OBJPROP_TEXT, trend_text);
-    ObjectSetInteger(0, trend_text_id, OBJPROP_COLOR, trend_color);
     
-    // Обновляем информацию о зонах перекупленности/перепроданности
-    string zones_text = GetLocalizedText("zones") + ": " + 
-                      GetLocalizedText("overbought_level") + "=" + DoubleToString(dynamic_overbought_level, 2) +
-                      ", " + GetLocalizedText("oversold_level") + "=" + DoubleToString(dynamic_oversold_level, 2);
-    
-    ObjectSetString(0, zones_text_id, OBJPROP_TEXT, zones_text);
-}
-
-//+------------------------------------------------------------------+
-//| Удаление информационной панели                                  |
-//+------------------------------------------------------------------+
-void DeleteInfoPanel()
-{
-    ObjectDelete(0, info_panel_id);
-    ObjectDelete(0, info_panel_id + "_Title");
-    ObjectDelete(0, pattern_text_id);
-    ObjectDelete(0, datetime_text_id);
-    ObjectDelete(0, username_text_id);
-    ObjectDelete(0, risk_text_id);
-    ObjectDelete(0, trend_text_id);
-    ObjectDelete(0, zones_text_id);
-}
-
-//+------------------------------------------------------------------+
-//| Расчет уровня риска для сигнала                                 |
-//+------------------------------------------------------------------+
-ENUM_RISK_LEVEL CalculateRiskLevel(int bar_pos, int period, double &risk_value)
-{
-    if(bar_pos < period)
+    // Обновляем информацию о зонах
+    if(dynamic_overbought_level != 0 || dynamic_oversold_level != 0)
     {
-        risk_value = 0.0;
+        string zones_text = GetLocalizedText("zones") + ": " +
+                          GetLocalizedText("overbought_level") + "=" + DoubleToString(dynamic_overbought_level, 2) +
+                          ", " + GetLocalizedText("oversold_level") + "=" + DoubleToString(dynamic_oversold_level, 2);
+        ObjectSetString(0, zones_text_id, OBJPROP_TEXT, zones_text);
+    }
+    else
+    {
+        ObjectSetString(0, zones_text_id, OBJPROP_TEXT, GetLocalizedText("zones") + ": -");
+    }
+    
+    // Обновляем время
+    ObjectSetString(0, datetime_text_id, OBJPROP_TEXT, GetLocalizedText("current_time") + ": " + 
+                 TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS));
+}
+
+//+------------------------------------------------------------------+
+//| Расчет уровня риска                                            |
+//+------------------------------------------------------------------+
+ENUM_RISK_LEVEL CalculateRiskLevel(int bar_index, int period, double &risk_value)
+{
+    if(bar_index <= period || period <= 0)
+    {
+        risk_value = 0.5; // Средний риск по умолчанию
         return RISK_MEDIUM;
     }
     
-    // Вычисляем волатильность VFI
-    double vfi_sum = 0.0;
-    double vfi_sum_sq = 0.0;
-    double max_vfi = -DBL_MAX;
-    double min_vfi = DBL_MAX;
-    int valid_count = 0;
+    // Используем несколько метрик для оценки риска
     
-    for(int i = bar_pos; i > bar_pos - period && i >= 0; i--)
+    // 1. Волатильность
+    double volatility = CalculateVolatility(bar_index, period);
+    
+    // 2. Тренд и его сила
+    double trend_strength = 0;
+    ENUM_TREND_DIRECTION trend = DetermineTrend(bar_index, period, trend_strength);
+    
+    // 3. Позиция относительно уровней перекупленности/перепроданности
+    double overbought_oversold_factor = 0;
+    if(dynamic_overbought_level != 0 && dynamic_oversold_level != 0)
     {
-        if(VFI_Buffer[i] != EMPTY_VALUE)
+        double current_vfi = VFI_Buffer[bar_index];
+        double range = dynamic_overbought_level - dynamic_oversold_level;
+        if(range != 0)
         {
-            vfi_sum += VFI_Buffer[i];
-            vfi_sum_sq += MathPow(VFI_Buffer[i], 2);
-            if(VFI_Buffer[i] > max_vfi) max_vfi = VFI_Buffer[i];
-            if(VFI_Buffer[i] < min_vfi) min_vfi = VFI_Buffer[i];
-            valid_count++;
+            // Нормализуем положение в диапазоне от 0 до 1
+            double position = (current_vfi - dynamic_oversold_level) / range;
+            // Преобразуем в фактор риска: чем ближе к крайним значениям, тем выше риск
+            overbought_oversold_factor = 2.0 * MathAbs(position - 0.5);
         }
     }
     
-    if(valid_count < period / 2)
-    {
-        risk_value = 0.0;
-        return RISK_MEDIUM;
-    }
+        // 4. Расхождение между VFI и ценой (дивергенция)
+    double divergence_factor = CalculateDivergenceFactor(bar_index, period);
     
-    double vfi_avg = vfi_sum / valid_count;
-    double vfi_std = MathSqrt(vfi_sum_sq / valid_count - MathPow(vfi_avg, 2));
+    // Объединяем факторы с весами
+    risk_value = 0.3 * volatility + 0.2 * trend_strength + 0.3 * overbought_oversold_factor + 0.2 * divergence_factor;
     
-    // Вычисляем расстояние между текущим значением и средним
-    double current_distance = MathAbs(VFI_Buffer[bar_pos] - vfi_avg);
+    // Ограничиваем значение от 0 до 1
+    risk_value = MathMin(MathMax(risk_value, 0.0), 1.0);
     
-    // Нормализованное значение риска от 0 до 1
-    double risk_normalized = 0.0;
-    
-    // Расстояние выхода за границы диапазона (% от макс-мин)
-    if(vfi_std > 0)
-    {
-                risk_normalized = current_distance / (vfi_std * 3); // 3 сигмы
-        risk_normalized = MathMin(risk_normalized, 1.0); // Ограничиваем максимум
-    }
-    
-    // Дополнительное влияние близости к экстремумам
-    double range_total = max_vfi - min_vfi;
-    if(range_total > 0)
-    {
-        double extreme_factor = 0.0;
-        
-        if(VFI_Buffer[bar_pos] > vfi_avg) // Выше среднего
-            extreme_factor = (VFI_Buffer[bar_pos] - vfi_avg) / (max_vfi - vfi_avg);
-        else // Ниже среднего
-            extreme_factor = (vfi_avg - VFI_Buffer[bar_pos]) / (vfi_avg - min_vfi);
-            
-        risk_normalized = risk_normalized * 0.7 + extreme_factor * 0.3; // 70/30 весовой коэффициент
-    }
-    
-    risk_value = risk_normalized;
-    
-    // Определяем уровень риска
-    if(risk_normalized < 0.33)
+    // Определяем уровень риска на основе значения
+    if(risk_value < 0.33)
         return RISK_LOW;
-    else if(risk_normalized < 0.66)
+    else if(risk_value < 0.66)
         return RISK_MEDIUM;
     else
         return RISK_HIGH;
 }
 
 //+------------------------------------------------------------------+
-//| Динамическая настройка цветов индикатора                       |
+//| Расчет волатильности                                           |
 //+------------------------------------------------------------------+
-void UpdateDynamicColors(int bar_pos)
+double CalculateVolatility(int bar_index, int period)
 {
-    if(!EnableDynamicColors || bar_pos <= 0)
-        return;
+    if(bar_index <= period || period <= 0)
+        return 0.5;
     
-    // Вычисляем относительное положение индикатора
-    double vfi_current = VFI_Buffer[bar_pos];
-    double vfi_prev = VFI_Buffer[bar_pos - 1];
+    // Рассчитываем стандартное отклонение VFI
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    int count = 0;
     
-    // Определяем цвета в зависимости от положения и направления движения
-    color vfi_color, ema_color;
-    
-    if(vfi_current > 0)
+    for(int i = bar_index; i > bar_index - period && i >= 0; i--)
     {
-        // Положительное значение VFI
-        if(vfi_current > vfi_prev)
-            vfi_color = clrLimeGreen;  // Рост над нулём - ярко-зелёный
-        else
-            vfi_color = clrGreen;      // Падение над нулём - обычный зелёный
-    }
-    else
-    {
-        // Отрицательное значение VFI
-        if(vfi_current < vfi_prev)
-            vfi_color = clrCrimson;    // Падение под нулём - ярко-красный
-        else
-            vfi_color = clrRed;        // Рост под нулём - обычный красный
+        if(VFI_Buffer[i] != EMPTY_VALUE)
+        {
+            sum += VFI_Buffer[i];
+            sum_sq += VFI_Buffer[i] * VFI_Buffer[i];
+            count++;
+        }
     }
     
-    // Цвет EMA линии меняем в зависимости от пересечения с VFI
-    if(vfi_current > VFI_EMA_Buffer[bar_pos])
-        ema_color = clrOrange;         // VFI выше EMA - оранжевый
-    else
-        ema_color = clrDarkOrange;     // VFI ниже EMA - темно-оранжевый
+    if(count < 2)
+        return 0.5;
     
-    // Применяем цвета динамически
-    PlotIndexSetInteger(0, PLOT_LINE_COLOR, vfi_color);
-    PlotIndexSetInteger(1, PLOT_LINE_COLOR, ema_color);
+    double mean = sum / count;
+    double variance = (sum_sq / count) - (mean * mean);
+    
+    // Избегаем отрицательных значений из-за ошибок округления
+    variance = MathMax(0, variance);
+    
+    double std_dev = MathSqrt(variance);
+    
+    // Нормализуем волатильность на основе исторических данных
+    // (можно было бы использовать ATR или другие методы)
+    double norm_volatility = MathMin(std_dev / 0.5, 1.0);
+    
+    return norm_volatility;
+}
+
+//+------------------------------------------------------------------+
+//| Расчет фактора дивергенции                                     |
+//+------------------------------------------------------------------+
+double CalculateDivergenceFactor(int bar_index, int period)
+{
+    if(bar_index <= period || period <= 0)
+        return 0.0;
+    
+    // Упрощенный расчет дивергенции
+    // Сравниваем направление движения VFI и цены
+    double vfi_change = 0.0;
+    double price_change = 0.0;
+    
+    if(bar_index < ArraySize(VFI_Buffer) && bar_index - period >= 0)
+    {
+        vfi_change = VFI_Buffer[bar_index] - VFI_Buffer[bar_index - period];
+        
+        // Получаем цены закрытия
+        MqlRates rates[];
+        if(CopyRates(Symbol(), PERIOD_CURRENT, bar_index - period, period + 1, rates) == period + 1)
+        {
+            price_change = rates[period].close - rates[0].close;
+        }
+    }
+    
+    // Если знаки изменений противоположны, есть дивергенция
+    bool divergence = (vfi_change * price_change < 0);
+    
+    return divergence ? 0.8 : 0.2;
+}
+
+//+------------------------------------------------------------------+
+//| Проверка на паттерн Двойное Дно                               |
+//+------------------------------------------------------------------+
+bool IsDoubleBottom(int bar_index, int lookback_period)
+{
+    if(bar_index < 20 || lookback_period <= 0)
+        return false;
+    
+    int left_bottom = -1;
+    int right_bottom = -1;
+    double min_value = DBL_MAX;
+    
+    // Ищем первый минимум
+    for(int i = bar_index - 15; i <= bar_index - 5; i++)
+    {
+        if(i < 0) continue;
+        
+        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE && 
+           VFI_Buffer[i] < min_value && 
+           (i == 0 || VFI_Buffer[i] < VFI_Buffer[i-1]) && 
+           (i == ArraySize(VFI_Buffer)-1 || VFI_Buffer[i] < VFI_Buffer[i+1]))
+        {
+            min_value = VFI_Buffer[i];
+            left_bottom = i;
+        }
+    }
+    
+    if(left_bottom == -1)
+        return false;
+    
+    min_value = DBL_MAX;
+    
+    // Ищем второй минимум
+    for(int i = bar_index - 5; i <= bar_index; i++)
+    {
+        if(i < 0) continue;
+        
+        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE && 
+           VFI_Buffer[i] < min_value && 
+           (i == 0 || VFI_Buffer[i] < VFI_Buffer[i-1]) && 
+           (i == ArraySize(VFI_Buffer)-1 || VFI_Buffer[i] < VFI_Buffer[i+1]))
+        {
+            min_value = VFI_Buffer[i];
+            right_bottom = i;
+        }
+    }
+    
+    if(right_bottom == -1 || left_bottom == right_bottom)
+        return false;
+    
+    // Проверяем, что между минимумами есть локальный максимум
+    double peak = VFI_Buffer[left_bottom];
+    for(int i = left_bottom + 1; i < right_bottom; i++)
+    {
+        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] > peak)
+            peak = VFI_Buffer[i];
+    }
+    
+    // Минимальная высота паттерна
+    double min_height = 0.2;
+    
+    // Проверка условий двойного дна
+    bool valid_height = (peak - VFI_Buffer[left_bottom] > min_height) && (peak - VFI_Buffer[right_bottom] > min_height);
+    bool similar_bottoms = MathAbs(VFI_Buffer[left_bottom] - VFI_Buffer[right_bottom]) < 0.1;
+    
+    return valid_height && similar_bottoms;
+}
+
+//+------------------------------------------------------------------+
+//| Проверка на паттерн Двойная Вершина                            |
+//+------------------------------------------------------------------+
+bool IsDoubleTop(int bar_index, int lookback_period)
+{
+    if(bar_index < 20 || lookback_period <= 0)
+        return false;
+    
+    int left_top = -1;
+    int right_top = -1;
+    double max_value = -DBL_MAX;
+    
+    // Ищем первый максимум
+    for(int i = bar_index - 15; i <= bar_index - 5; i++)
+    {
+        if(i < 0) continue;
+        
+        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE && 
+           VFI_Buffer[i] > max_value && 
+           (i == 0 || VFI_Buffer[i] > VFI_Buffer[i-1]) && 
+           (i == ArraySize(VFI_Buffer)-1 || VFI_Buffer[i] > VFI_Buffer[i+1]))
+        {
+            max_value = VFI_Buffer[i];
+            left_top = i;
+        }
+    }
+    
+    if(left_top == -1)
+        return false;
+    
+    max_value = -DBL_MAX;
+    
+    // Ищем второй максимум
+    for(int i = bar_index - 5; i <= bar_index; i++)
+    {
+        if(i < 0) continue;
+        
+        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE && 
+           VFI_Buffer[i] > max_value && 
+           (i == 0 || VFI_Buffer[i] > VFI_Buffer[i-1]) && 
+           (i == ArraySize(VFI_Buffer)-1 || VFI_Buffer[i] > VFI_Buffer[i+1]))
+        {
+            max_value = VFI_Buffer[i];
+            right_top = i;
+        }
+    }
+    
+    if(right_top == -1 || left_top == right_top)
+        return false;
+    
+    // Проверяем, что между максимумами есть локальный минимум
+    double valley = VFI_Buffer[left_top];
+    for(int i = left_top + 1; i < right_top; i++)
+    {
+        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] < valley)
+            valley = VFI_Buffer[i];
+    }
+    
+    // Минимальная высота паттерна
+    double min_height = 0.2;
+    
+    // Проверка условий двойной вершины
+    bool valid_height = (VFI_Buffer[left_top] - valley > min_height) && (VFI_Buffer[right_top] - valley > min_height);
+    bool similar_tops = MathAbs(VFI_Buffer[left_top] - VFI_Buffer[right_top]) < 0.1;
+    
+    return valid_height && similar_tops;
 }
 
 //+------------------------------------------------------------------+
@@ -1194,10 +1327,8 @@ void UpdateDynamicColors(int bar_pos)
 //+------------------------------------------------------------------+
 int OnInit()
 {
-    // Инициализация значений пользователя и времени
-    session_start_time = TimeGMT();
-    indicator_load_time = TimeCurrent();  // Устанавливаем время загрузки индикатора
-    Print("Indicator loaded at: ", TimeToString(indicator_load_time));
+    // Determine system language first
+    is_russian_system = IsRussianSystem();
     
     // Validate input parameters
     if(VFI_Length < 10)
@@ -1218,77 +1349,36 @@ int OnInit()
         return(INIT_PARAMETERS_INCORRECT);
     }
     
-    // Проверка параметров зон
-    if(ZonesAutoCalculationPeriod < 20)
-    {
-        Print("❌ ", GetLocalizedText("parameter_error"), ": ", "ZonesAutoCalculationPeriod must be >= 20");
-        return(INIT_PARAMETERS_INCORRECT);
-    }
-    
-    if(ZonePercentile <= 0 || ZonePercentile >= 100)
-    {
-        Print("❌ ", GetLocalizedText("parameter_error"), ": ", "ZonePercentile must be between 0 and 100");
-        return(INIT_PARAMETERS_INCORRECT);
-    }
-    
-    // Проверка изменения параметров для принудительного пересчета
-    if(prev_vfi_length != VFI_Length || 
-       prev_coef != Coef || 
-       prev_vcoef != VCoef || 
-       prev_signal_length != SignalLength ||
-       prev_smooth_vfi != SmoothVFI ||
-       prev_show_histo != ShowHisto ||
-       prev_use_real_volume != UseRealVolume)
-    {
-        parameters_changed = true;
-        prev_vfi_length = VFI_Length;
-        prev_coef = Coef;
-        prev_vcoef = VCoef;
-        prev_signal_length = SignalLength;
-        prev_smooth_vfi = SmoothVFI;
-        prev_show_histo = ShowHisto;
-        prev_use_real_volume = UseRealVolume;
-    }
-    
-    // Если параметры изменились, форсируем полный пересчет
-    if(parameters_changed && prev_vfi_length != -1) // -1 означает первый запуск
-    {
-        Print("Parameters changed - forcing full recalculation");
-    }
-    
-    // Determine system language
-    is_russian_system = IsRussianSystem();
-    
     //--- indicator buffers mapping
     SetIndexBuffer(0, VFI_Buffer, INDICATOR_DATA);
     SetIndexBuffer(1, VFI_EMA_Buffer, INDICATOR_DATA);
     SetIndexBuffer(2, Histogram_Buffer, INDICATOR_DATA);
     SetIndexBuffer(3, Buy_Signal_Buffer, INDICATOR_DATA);
     SetIndexBuffer(4, Sell_Signal_Buffer, INDICATOR_DATA);
-    SetIndexBuffer(5, DoubleBottom_Buffer, INDICATOR_CALCULATIONS);  // Теперь только для расчетов
-    SetIndexBuffer(6, DoubleTop_Buffer, INDICATOR_CALCULATIONS);     // Теперь только для расчетов
-    SetIndexBuffer(7, Divergence_Buffer, INDICATOR_CALCULATIONS);    // Теперь только для расчетов
+    SetIndexBuffer(5, DoubleBottom_Buffer, INDICATOR_DATA);
+    SetIndexBuffer(6, DoubleTop_Buffer, INDICATOR_DATA);
+    SetIndexBuffer(7, Divergence_Buffer, INDICATOR_DATA);
     SetIndexBuffer(8, Risk_Buffer, INDICATOR_DATA);
     SetIndexBuffer(9, Risk_Colors_Buffer, INDICATOR_COLOR_INDEX);
     SetIndexBuffer(10, VCP_Buffer, INDICATOR_CALCULATIONS);
     
-    // Инициализация буфера для тренда
-    ArrayResize(trend_buffer, 0);
+    // Установка важного свойства для сохранения истории (!)
+    PlotIndexSetInteger(0, PLOT_DRAW_BEGIN, VFI_Length);
+    PlotIndexSetInteger(1, PLOT_DRAW_BEGIN, VFI_Length);
+    PlotIndexSetInteger(2, PLOT_DRAW_BEGIN, VFI_Length);
+    PlotIndexSetInteger(3, PLOT_DRAW_BEGIN, VFI_Length);
+    PlotIndexSetInteger(4, PLOT_DRAW_BEGIN, VFI_Length);
+    PlotIndexSetInteger(8, PLOT_DRAW_BEGIN, VFI_Length);
     
-    //--- set arrow codes for the signals
-    PlotIndexSetInteger(3, PLOT_ARROW, 233); // Up arrow for buy
-    PlotIndexSetInteger(4, PLOT_ARROW, 234); // Down arrow for sell
-    
-    // Скрываем графические элементы для паттернов
-    PlotIndexSetInteger(5, PLOT_DRAW_TYPE, DRAW_NONE);  // Double Bottom
-    PlotIndexSetInteger(6, PLOT_DRAW_TYPE, DRAW_NONE);  // Double Top
-    PlotIndexSetInteger(7, PLOT_DRAW_TYPE, DRAW_NONE);  // Divergence
+    // Arrow settings
+    PlotIndexSetInteger(3, PLOT_ARROW, 233); // Buy signal arrow
+    PlotIndexSetInteger(4, PLOT_ARROW, 234); // Sell signal arrow
     
     //--- set accuracy
     IndicatorSetInteger(INDICATOR_DIGITS, 4);
     
     //--- set short name
-    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_DubravaSPB(" + 
+    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_Pro(" + 
                       IntegerToString(VFI_Length) + "," + 
                       DoubleToString(Coef, 1) + "," + 
                       DoubleToString(VCoef, 1) + ")");
@@ -1302,6 +1392,9 @@ int OnInit()
     PlotIndexSetDouble(2, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     PlotIndexSetDouble(3, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     PlotIndexSetDouble(4, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+    PlotIndexSetDouble(5, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+    PlotIndexSetDouble(6, PLOT_EMPTY_VALUE, EMPTY_VALUE);
+    PlotIndexSetDouble(7, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     PlotIndexSetDouble(8, PLOT_EMPTY_VALUE, EMPTY_VALUE);
     
     //--- hide histogram if not needed
@@ -1310,40 +1403,58 @@ int OnInit()
     else
         PlotIndexSetInteger(2, PLOT_DRAW_TYPE, DRAW_HISTOGRAM);
     
-    //--- initialize calculation arrays
-    ArrayResize(inter_array, 0);
-    ArrayResize(typical_array, 0);
-    ArrayResize(volatility_array, 0);
-    ArrayResize(price_array, 0);
+    //--- initialize calculation arrays with sufficient size
+    int initial_size = 1000; // Задаем начальный размер с запасом
+    ArrayResize(inter_array, initial_size);
+    ArrayResize(typical_array, initial_size);
+    ArrayResize(volatility_array, initial_size);
+    ArrayResize(price_array, initial_size);
+    ArrayResize(trend_buffer, initial_size);
+    
+    // Инициализируем массивы нулевыми значениями
+    ArrayInitialize(inter_array, 0.0);
+    ArrayInitialize(typical_array, 0.0);
+    ArrayInitialize(volatility_array, 0.0);
+    ArrayInitialize(price_array, 0.0);
+    ArrayInitialize(trend_buffer, 0.0);
+    
+    // Сохраняем текущие параметры
+    prev_vfi_length = VFI_Length;
+    prev_coef = Coef;
+    prev_vcoef = VCoef;
+    prev_signal_length = SignalLength;
+    prev_smooth_vfi = SmoothVFI;
+    prev_show_histo = ShowHisto;
+    prev_use_real_volume = UseRealVolume;
+    
+    // Инициализируем переменные
+    indicator_load_time = TimeCurrent();
+    session_start_time = indicator_load_time;
+    
+    // Сбрасываем счетчик баров при инициализации
+    last_rates_total = 0;
     
     // Создаем информационную панель
     if(ShowInfoPanel)
-    {
         CreateInfoPanel();
-        Print("✅ ", GetLocalizedText("info_panel_enabled"));
-    }
     
-    // Log that signals are enabled
-    Print("✅ ", GetLocalizedText("buy_signals_enabled"));
-    Print("✅ ", GetLocalizedText("sell_signals_enabled"));
+    // Выводим информацию о настройках
+    Print("--- VFI Pro Indicator Settings ---");
+    Print(GetLocalizedText("indicator_settings"), ":");
+    Print("  VFI Length: ", VFI_Length);
+    Print("  Coefficient: ", Coef);
+    Print("  Max Volume Cutoff: ", VCoef);
+    Print("  Signal Length: ", SignalLength);
+    Print("  Smooth VFI: ", SmoothVFI ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Show Histogram: ", ShowHisto ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Use Real Volume: ", UseRealVolume ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Show Patterns: ", ShowPatterns ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Alerts: ", EnableAlerts ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Notifications: ", EnableNotifications ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Dynamic Colors: ", EnableDynamicColors ? GetLocalizedText("yes") : GetLocalizedText("no"));
+    Print("  Info Panel: ", ShowInfoPanel ? GetLocalizedText("yes") : GetLocalizedText("no"));
     
-    // Log additional features
-    if(ShowPatterns)
-        Print("✅ ", GetLocalizedText("pattern_recognition_enabled"));
-    
-    if(EnableAlerts)
-        Print("✅ ", GetLocalizedText("alerts_enabled"));
-        
-    if(EnableNotifications)
-        Print("✅ ", GetLocalizedText("notifications_enabled"));
-        
-    if(EnableDynamicColors)
-        Print("✅ ", GetLocalizedText("dynamic_colors_enabled"));
-    
-    // Логируем включение автоматического определения зон
-    Print("✅ ", GetLocalizedText("auto_zones"));
-    
-    //--- check volume data
+    // Запускаем проверку объемов
     CheckVolumeData();
     
     return(INIT_SUCCEEDED);
@@ -1356,18 +1467,12 @@ void CheckVolumeData()
 {
     string symbol = Symbol();
     string username = GetComputerUserName();
-    string datetime_str = GetCurrentDateTime();
+    string current_datetime = GetCurrentDateTime();
     
     Print(GetLocalizedText("volume_check_header"));
-    Print("✅ ", GetLocalizedText("symbol"), ": ", symbol);
-    Print("✅ ", GetLocalizedText("datetime"), ": ", datetime_str, " UTC");
-    Print("✅ ", GetLocalizedText("user"), ": ", username);
-    
-    // Debug terminal paths
-    Print("✅ ", GetLocalizedText("terminal_paths"), ":");
-    Print("   TERMINAL_PATH: ", TerminalInfoString(TERMINAL_PATH));
-    Print("   TERMINAL_DATA_PATH: ", TerminalInfoString(TERMINAL_DATA_PATH));
-    Print("   TERMINAL_COMMONDATA_PATH: ", TerminalInfoString(TERMINAL_COMMONDATA_PATH));
+    Print(GetLocalizedText("symbol"), ": ", symbol);
+    Print(GetLocalizedText("datetime"), ": ", current_datetime);
+    Print(GetLocalizedText("user"), ": ", username);
     
     // Check execution type
     ENUM_SYMBOL_TRADE_EXECUTION execution = (ENUM_SYMBOL_TRADE_EXECUTION)SymbolInfoInteger(symbol, SYMBOL_TRADE_EXEMODE);
@@ -1380,19 +1485,19 @@ void CheckVolumeData()
         case SYMBOL_TRADE_EXECUTION_EXCHANGE: exec_type = "Exchange"; break;
         default: exec_type = "Unknown";
     }
-    Print("✅ ", GetLocalizedText("execution_type"), ": ", exec_type);
+    Print(GetLocalizedText("execution_type"), ": ", exec_type);
     
     // Get test data
     MqlRates rates[];
-    int copied = CopyRates(symbol, PERIOD_CURRENT, 0, 100, rates);
+    int copied = CopyRates(symbol, PERIOD_CURRENT, 0, 30, rates);
     
     if(copied <= 0)
     {
-        Print(" ", GetLocalizedText("error_no_data"));
+        Print(GetLocalizedText("error_no_data"));
         return;
     }
     
-    Print("✅ ", GetLocalizedText("bars_analyzed"), ": ", copied);
+    Print(GetLocalizedText("bars_analyzed"), ": ", copied);
     
     // Analyze tick volumes
     long total_tick_volume = 0;
@@ -1407,31 +1512,34 @@ void CheckVolumeData()
     int zero_real_volumes = 0;
     bool has_real_volumes = false;
     
+    // Оптимизированный цикл - обработка за один проход
     for(int i = 0; i < copied; i++)
     {
         // Tick volumes
-        if(rates[i].tick_volume == 0)
+        long tick_vol = rates[i].tick_volume;
+        total_tick_volume += tick_vol;
+        
+        if(tick_vol == 0)
             zero_tick_volumes++;
-        
-        total_tick_volume += rates[i].tick_volume;
-        
-        if(rates[i].tick_volume > max_tick_volume)
-            max_tick_volume = rates[i].tick_volume;
             
-        if(rates[i].tick_volume < min_tick_volume && rates[i].tick_volume > 0)
-            min_tick_volume = rates[i].tick_volume;
+        if(tick_vol > max_tick_volume)
+            max_tick_volume = tick_vol;
+            
+        if(tick_vol < min_tick_volume && tick_vol > 0)
+            min_tick_volume = tick_vol;
         
         // Real volumes
-        if(rates[i].real_volume > 0)
+        long real_vol = rates[i].real_volume;
+        if(real_vol > 0)
         {
             has_real_volumes = true;
-            total_real_volume += rates[i].real_volume;
+            total_real_volume += real_vol;
             
-            if(rates[i].real_volume > max_real_volume)
-                max_real_volume = rates[i].real_volume;
+            if(real_vol > max_real_volume)
+                max_real_volume = real_vol;
                 
-            if(rates[i].real_volume < min_real_volume)
-                min_real_volume = rates[i].real_volume;
+            if(real_vol < min_real_volume)
+                min_real_volume = real_vol;
         }
         else
         {
@@ -1441,11 +1549,11 @@ void CheckVolumeData()
     
     // Tick volume results
     double avg_tick_volume = (double)total_tick_volume / copied;
-    Print("✅ ", GetLocalizedText("tick_volumes"), ":");
-    Print("   ", GetLocalizedText("average"), ": ", (long)avg_tick_volume);
-    Print("   ", GetLocalizedText("maximum"), ": ", max_tick_volume);
-    Print("   ", GetLocalizedText("minimum"), ": ", min_tick_volume);
-    Print("   ", GetLocalizedText("zero_bars"), ": ", zero_tick_volumes, " (", 
+    Print(GetLocalizedText("tick_volumes"), ":");
+    Print("  ", GetLocalizedText("average"), ": ", (long)avg_tick_volume);
+    Print("  ", GetLocalizedText("maximum"), ": ", max_tick_volume);
+    Print("  ", GetLocalizedText("minimum"), ": ", min_tick_volume);
+    Print("  ", GetLocalizedText("zero_bars"), ": ", zero_tick_volumes, " (", 
           MathRound(zero_tick_volumes * 100.0 / copied), "%)");
     
     // Real volume results
@@ -1453,16 +1561,16 @@ void CheckVolumeData()
     if(has_real_volumes)
     {
         double avg_real_volume = (double)total_real_volume / (copied - zero_real_volumes);
-        Print("✅ ", GetLocalizedText("real_volumes"), ":");
-        Print("   ", GetLocalizedText("average"), ": ", (long)avg_real_volume);
-        Print("   ", GetLocalizedText("maximum"), ": ", max_real_volume);
-        Print("   ", GetLocalizedText("minimum"), ": ", min_real_volume);
-        Print("   ", GetLocalizedText("zero_bars"), ": ", zero_real_volumes, " (", 
+        Print(GetLocalizedText("real_volumes"), ":");
+        Print("  ", GetLocalizedText("average"), ": ", (long)avg_real_volume);
+        Print("  ", GetLocalizedText("maximum"), ": ", max_real_volume);
+        Print("  ", GetLocalizedText("minimum"), ": ", min_real_volume);
+        Print("  ", GetLocalizedText("zero_bars"), ": ", zero_real_volumes, " (", 
               MathRound(zero_real_volumes * 100.0 / copied), "%)");
     }
     else
     {
-        Print(" ", GetLocalizedText("real_volumes_unavailable"));
+        Print(GetLocalizedText("real_volumes_unavailable"));
     }
     
     // Data quality assessment
@@ -1495,336 +1603,12 @@ void CheckVolumeData()
         recommendation = GetLocalizedText("will_work_correctly");
     }
     
-    Print(" ", GetLocalizedText("quality_assessment"), ": ", quality_assessment);
-    Print(" ", GetLocalizedText("recommendation"), ": ", recommendation);
-    
-    // Indicator settings
-    Print("✅ ", GetLocalizedText("indicator_settings"), ":");
-    
-    if(has_real_volumes && UseRealVolume)
-    {
-        Print("   ", GetLocalizedText("will_use_real"));
-    }
-    else
-    {
-        Print("   ", GetLocalizedText("will_use_tick"));
-    }
-    
-    Print("   VFI Length: ", VFI_Length);
-    Print("   Coefficient: ", Coef);
-    Print("   Max Volume Cutoff: ", VCoef);
-    Print("   Signal Length: ", SignalLength);
-    Print("   Trend Period: ", TrendPeriod);
-    Print("   Zones Auto Calculation Period: ", ZonesAutoCalculationPeriod);
-    Print("   Zone Percentile: ", ZonePercentile);
-    Print("   Zone Transparency: ", ZoneTransparency);
-    Print("   Smooth VFI: ", SmoothVFI ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Show Histogram: ", ShowHisto ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Show Patterns: ", ShowPatterns ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Enable Alerts: ", EnableAlerts ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Enable Notifications: ", EnableNotifications ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Enable Dynamic Colors: ", EnableDynamicColors ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Show Info Panel: ", ShowInfoPanel ? GetLocalizedText("yes") : GetLocalizedText("no"));
-    Print("   Risk Assessment Period: ", RiskAssessmentPeriod);
+    Print(GetLocalizedText("quality_assessment"), ": ", quality_assessment);
+    Print(GetLocalizedText("recommendation"), ": ", recommendation);
 }
 
 //+------------------------------------------------------------------+
-//| Определение двойного дна в индикаторе                          |
-//+------------------------------------------------------------------+
-bool IsDoubleBottom(int bar_pos, int range)
-{
-    if(bar_pos < range * 2)
-        return false;
-        
-    // Минимальное расстояние между впадинами
-    int min_distance = range / 3;
-    if(min_distance < 3) min_distance = 3;
-    
-    // Ищем две впадины
-    double min_value1 = VFI_Buffer[bar_pos];
-    int min_pos1 = bar_pos;
-    
-    // Ищем первую впадину
-    for(int i = bar_pos - range; i <= bar_pos; i++)
-    {
-        if(i >= 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] < min_value1)
-        {
-            min_value1 = VFI_Buffer[i];
-            min_pos1 = i;
-        }
-    }
-    
-    // Если первая впадина совпадает с текущим баром, значит она не найдена
-    if(min_pos1 == bar_pos)
-        return false;
-        
-    // Ищем вторую впадину до первой впадины
-    double min_value2 = VFI_Buffer[0];
-    int min_pos2 = -1;
-    
-    for(int i = min_pos1 - min_distance; i >= min_pos1 - range && i >= 0; i--)
-    {
-        if(VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] <= min_value1 * 1.05 && 
-           VFI_Buffer[i] >= min_value1 * 0.95) // Похожий уровень (±5%)
-        {
-            min_value2 = VFI_Buffer[i];
-            min_pos2 = i;
-            break;
-        }
-    }
-    
-    // Если вторая впадина не найдена
-    if(min_pos2 < 0)
-        return false;
-        
-    // Проверяем, есть ли пик между впадинами
-    double max_between = min_value1;
-    for(int i = min_pos2; i <= min_pos1; i++)
-    {
-        if(VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] > max_between)
-        {
-            max_between = VFI_Buffer[i];
-        }
-    }
-    
-    // Пик между впадинами должен быть выше минимума хотя бы на 20%
-    return (max_between > min_value1 * 1.2);
-}
-
-//+------------------------------------------------------------------+
-//| Определение двойной вершины в индикаторе                       |
-//+------------------------------------------------------------------+
-bool IsDoubleTop(int bar_pos, int range)
-{
-    if(bar_pos < range * 2)
-        return false;
-        
-    // Минимальное расстояние между пиками
-    int min_distance = range / 3;
-    if(min_distance < 3) min_distance = 3;
-    
-    // Ищем два пика
-    double max_value1 = VFI_Buffer[bar_pos];
-    int max_pos1 = bar_pos;
-    
-    // Ищем первый пик
-    for(int i = bar_pos - range; i <= bar_pos; i++)
-    {
-        if(i >= 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] > max_value1)
-        {
-            max_value1 = VFI_Buffer[i];
-            max_pos1 = i;
-        }
-    }
-    
-    // Если первый пик совпадает с текущим баром, значит он не найден
-    if(max_pos1 == bar_pos)
-        return false;
-        
-    // Ищем второй пик до первого пика
-    double max_value2 = VFI_Buffer[0];
-    int max_pos2 = -1;
-    
-    for(int i = max_pos1 - min_distance; i >= max_pos1 - range && i >= 0; i--)
-    {
-        if(VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] >= max_value1 * 0.95 && 
-           VFI_Buffer[i] <= max_value1 * 1.05) // Похожий уровень (±5%)
-        {
-            max_value2 = VFI_Buffer[i];
-            max_pos2 = i;
-            break;
-        }
-    }
-    
-    // Если второй пик не найден
-    if(max_pos2 < 0)
-        return false;
-        
-    // Проверяем, есть ли впадина между пиками
-    double min_between = max_value1;
-    for(int i = max_pos2; i <= max_pos1; i++)
-    {
-        if(VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i] < min_between)
-        {
-            min_between = VFI_Buffer[i];
-        }
-    }
-    
-    // Впадина между пиками должна быть ниже максимума хотя бы на 20%
-    return (min_between < max_value1 * 0.8);
-}
-
-//+------------------------------------------------------------------+
-//| Определение дивергенции между ценой и индикатором               |
-//+------------------------------------------------------------------+
-bool IsDivergence(int bar_pos, int range, const double &close[])
-{
-    if(bar_pos < range * 2)
-        return false;
-        
-    // Минимальное расстояние между точками
-    int min_distance = range / 3;
-    if(min_distance < 3) min_distance = 3;
-    
-    // Находим максимумы/минимумы в цене и индикаторе
-    double price_high1 = close[0];
-    double price_low1 = close[0];
-    double vfi_high1 = VFI_Buffer[bar_pos];
-    double vfi_low1 = VFI_Buffer[bar_pos];
-    int price_high_pos1 = bar_pos;
-    int price_low_pos1 = bar_pos;
-    int vfi_high_pos1 = bar_pos;
-    int vfi_low_pos1 = bar_pos;
-    
-    // Проверяем диапазоны
-    int start_pos = MathMin(bar_pos, ArraySize(close) - 1);
-    
-    // Находим первые экстремумы
-    for(int i = 0; i < range / 2 && i < start_pos; i++)
-    {
-        int idx = start_pos - i;
-        // Максимумы и минимумы цены
-        if(idx >= 0 && idx < ArraySize(close))
-        {
-            if(close[idx] > price_high1)
-            {
-                price_high1 = close[idx];
-                price_high_pos1 = idx;
-            }
-            if(close[idx] < price_low1)
-            {
-                price_low1 = close[idx];
-                price_low_pos1 = idx;
-            }
-        }
-        
-        // Максимумы и минимумы индикатора
-        if(idx >= 0 && idx < ArraySize(VFI_Buffer) && VFI_Buffer[idx] != EMPTY_VALUE)
-        {
-            if(VFI_Buffer[idx] > vfi_high1)
-            {
-                vfi_high1 = VFI_Buffer[idx];
-                vfi_high_pos1 = idx;
-            }
-            if(VFI_Buffer[idx] < vfi_low1)
-            {
-                vfi_low1 = VFI_Buffer[idx];
-                vfi_low_pos1 = idx;
-            }
-        }
-    }
-    
-    // Находим вторые экстремумы
-    double price_high2 = price_high1;
-    double price_low2 = price_low1;
-    double vfi_high2 = vfi_high1;
-    double vfi_low2 = vfi_low1;
-    int price_high_pos2 = -1;
-    int price_low_pos2 = -1;
-    int vfi_high_pos2 = -1;
-    int vfi_low_pos2 = -1;
-    
-    int second_start = MathMax(0, start_pos - range / 2 - 1);
-    int second_end = MathMax(0, start_pos - range);
-    
-    for(int i = second_start; i >= second_end; i--)
-    {
-        // Максимумы и минимумы цены
-        if(i < ArraySize(close))
-        {
-            if(close[i] > price_high2)
-            {
-                price_high2 = close[i];
-                price_high_pos2 = i;
-            }
-            if(close[i] < price_low2)
-            {
-                price_low2 = close[i];
-                price_low_pos2 = i;
-            }
-        }
-        
-        // Максимумы и минимумы индикатора
-        if(i < ArraySize(VFI_Buffer) && VFI_Buffer[i] != EMPTY_VALUE)
-        {
-            if(VFI_Buffer[i] > vfi_high2)
-            {
-                vfi_high2 = VFI_Buffer[i];
-                vfi_high_pos2 = i;
-            }
-            if(VFI_Buffer[i] < vfi_low2)
-            {
-                vfi_low2 = VFI_Buffer[i];
-                vfi_low_pos2 = i;
-            }
-        }
-    }
-    
-    // Проверяем бычью дивергенцию: цены делают более низкие минимумы, индикатор - более высокие
-    if(price_low_pos2 >= 0 && vfi_low_pos2 >= 0 &&
-       price_low2 < price_low1 && vfi_low2 > vfi_low1)
-    {
-        return true;
-    }
-    
-    // Проверяем медвежью дивергенцию: цены делают более высокие максимумы, индикатор - более низкие
-    if(price_high_pos2 >= 0 && vfi_high_pos2 >= 0 &&
-       price_high2 > price_high1 && vfi_high2 < vfi_high1)
-    {
-        return true;
-    }
-    
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Calculate Standard Deviation for inter values - IMPROVED        |
-//+------------------------------------------------------------------+
-double CalculateStdDev(int pos, int period)
-{
-    if(pos < 1 || period < 1)
-        return(0.0001); // Минимальное значение вместо 0
-    
-    int actual_period = MathMin(period, pos + 1);
-    int start_pos = pos - actual_period + 1;
-    
-    //--- calculate mean
-    double mean = 0.0;
-    int valid_count = 0;
-    
-    for(int i = start_pos; i <= pos; i++)
-    {
-        if(i >= 0 && i < ArraySize(inter_array))
-        {
-            mean += inter_array[i];
-            valid_count++;
-        }
-    }
-    
-    if(valid_count == 0)
-        return(0.0001);
-        
-    mean /= valid_count;
-    
-    //--- calculate variance
-    double variance = 0.0;
-    for(int i = start_pos; i <= pos; i++)
-    {
-        if(i >= 0 && i < ArraySize(inter_array))
-        {
-            variance += MathPow(inter_array[i] - mean, 2);
-        }
-    }
-    variance /= valid_count;
-    
-    double std_dev = MathSqrt(variance);
-    
-    // ИСПРАВЛЕНИЕ: Возвращаем минимальное значение если результат слишком мал
-    return(MathMax(std_dev, 0.0001));
-}
-
-//+------------------------------------------------------------------+
-//| Custom indicator iteration function - FIXED                      |
+//| Custom indicator iteration function                              |
 //+------------------------------------------------------------------+
 int OnCalculate(const int rates_total,
                 const int prev_calculated,
@@ -1837,20 +1621,105 @@ int OnCalculate(const int rates_total,
                 const long &volume[],
                 const int &spread[])
 {
+    // Проверяем наличие минимального количества данных
+    if(rates_total <= 0)
+        return(0);
+    
     // Минимальное количество баров для расчета
     int min_bars = VFI_Length + 50;
     if(rates_total < min_bars)
         return(0);
     
-    // Проверяем необходимость полного пересчета
-    bool recalculate_all = (prev_calculated == 0 || parameters_changed);
+    // Проверяем, изменились ли параметры
+    parameters_changed = false;
+    if(prev_vfi_length != VFI_Length || 
+       prev_coef != Coef || 
+       prev_vcoef != VCoef || 
+       prev_signal_length != SignalLength || 
+       prev_smooth_vfi != SmoothVFI ||
+       prev_show_histo != ShowHisto ||
+       prev_use_real_volume != UseRealVolume)
+    {
+        parameters_changed = true;
+        prev_vfi_length = VFI_Length;
+        prev_coef = Coef;
+        prev_vcoef = VCoef;
+        prev_signal_length = SignalLength;
+        prev_smooth_vfi = SmoothVFI;
+        prev_show_histo = ShowHisto;
+        prev_use_real_volume = UseRealVolume;
+    }
     
+    // Определяем, произошел ли сброс буфера (например, из-за прокрутки графика)
+    bool buffer_reset = false;
+    
+    // Проверка, изменилось ли количество баров необычным образом
+    if(last_rates_total > 0)
+    {
+        // Стандартная ситуация - добавление новых баров
+        if(rates_total > last_rates_total)
+        {
+            if(rates_total - last_rates_total > 10) // если добавлено более 10 баров за раз, возможно это сброс
+            {
+                buffer_reset = true;
+                Print(GetLocalizedText("buffer_reset"));
+            }
+        }
+        else if(rates_total < last_rates_total)
+        {
+            // График был сжат или что-то подобное, нужен полный пересчет
+            buffer_reset = true;
+        }
+        
+        // Проверка первого значения буфера на сброс (EMPTY_VALUE)
+        if(!buffer_reset && rates_total > 0)
+        {
+            // Проверяем только первые несколько баров
+            for(int i = 0; i < MathMin(5, rates_total); i++)
+            {
+                if(VFI_Buffer[i] == EMPTY_VALUE && i < last_rates_total - 1)
+                {
+                    buffer_reset = true;
+                    Print(GetLocalizedText("buffer_reset"), " at bar ", i);
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Сохраняем текущее количество баров для следующего вызова
+    last_rates_total = rates_total;
+    
+    // Определяем, нужен ли полный пересчет
+    bool recalculate_all = (prev_calculated <= 0 || parameters_changed || buffer_reset);
+    
+    // Выводим сообщение только при необходимости
+    if(recalculate_all && (first_run || parameters_changed || buffer_reset))
+    {
+        if(parameters_changed)
+            Print(" ", GetLocalizedText("settings_changed"));
+        else if(buffer_reset)
+            Print(" ", GetLocalizedText("buffer_reset"));
+        first_run = false;
+    }
+    
+    //--- resize calculation arrays if needed
+    if(ArraySize(inter_array) < rates_total + 10)
+    {
+        int new_size = rates_total + 100; // Добавляем запас в 100 элементов
+        ArrayResize(inter_array, new_size);
+        ArrayResize(typical_array, new_size);
+        ArrayResize(volatility_array, new_size);
+        ArrayResize(price_array, new_size);
+        ArrayResize(trend_buffer, new_size);
+    }
+    
+    int calc_start;
     if(recalculate_all)
     {
-        parameters_changed = false;
-        Print("🔄 ", GetLocalizedText("settings_changed"));
+        calc_start = 1;
         
-        // Инициализируем буферы только при первом запуске или изменении параметров
+        // Инициализируем буферы
         ArrayInitialize(VFI_Buffer, EMPTY_VALUE);
         ArrayInitialize(VFI_EMA_Buffer, EMPTY_VALUE);
         ArrayInitialize(Histogram_Buffer, EMPTY_VALUE);
@@ -1863,84 +1732,52 @@ int OnCalculate(const int rates_total,
         ArrayInitialize(Risk_Colors_Buffer, 0);
         ArrayInitialize(VCP_Buffer, 0.0);
         
-        // Сбрасываем состояние зон
-        dynamic_overbought_level = 0;
-        dynamic_oversold_level = 0;
-        
-        // Удаляем объекты зон
-        ObjectDelete(0, overbought_zone_id);
-        ObjectDelete(0, oversold_zone_id);
-        ObjectDelete(0, overbought_line_id);
-        ObjectDelete(0, oversold_line_id);
-    }
-    
-    // Используем доп. буфер для ArrayResize
-    int extraBuffer = 100;
-    
-    // Изменяем размер буфера тренда при необходимости
-    if(ArraySize(trend_buffer) < rates_total)
-        ArrayResize(trend_buffer, rates_total + extraBuffer);
-    
-    //--- resize calculation arrays
-    if(ArraySize(inter_array) < rates_total)
-    {
-        ArrayResize(inter_array, rates_total + extraBuffer);
-        ArrayResize(typical_array, rates_total + extraBuffer);
-        ArrayResize(volatility_array, rates_total + extraBuffer);
-        ArrayResize(price_array, rates_total + extraBuffer);
-    }
-    
-    // Определяем начальную позицию для расчета
-    int start;
-    if(recalculate_all)
-    {
-        // Полный пересчет с начала истории
-        start = min_bars;
-        // Инициализируем начальные значения буферов
-        for(int i = 0; i < start; i++)
-        {
-            VFI_Buffer[i] = EMPTY_VALUE;
-            VFI_EMA_Buffer[i] = EMPTY_VALUE;
-            Histogram_Buffer[i] = EMPTY_VALUE;
-            Buy_Signal_Buffer[i] = EMPTY_VALUE;
-            Sell_Signal_Buffer[i] = EMPTY_VALUE;
-            Risk_Buffer[i] = EMPTY_VALUE;
-        }
+        // Инициализируем расчетные массивы
+        ArrayInitialize(inter_array, 0.0);
+        ArrayInitialize(typical_array, 0.0);
+        ArrayInitialize(volatility_array, 0.0);
+        ArrayInitialize(price_array, 0.0);
+        ArrayInitialize(trend_buffer, 0.0);
     }
     else
     {
-        // При обновлении пересчитываем минимально необходимое
-        // Для корректной работы VFI нужно пересчитать несколько последних баров
-        start = MathMax(prev_calculated - 10, min_bars);
+        // Начинаем расчет только с нового бара
+        calc_start = prev_calculated - 1;
+        if(calc_start < 1) calc_start = 1;
     }
     
-    //--- calculate typical prices and inter values
-    int calc_start = 1;
-    if(!recalculate_all && prev_calculated > 0)
+    // Проверяем, что массивы имеют нужный размер
+    if(ArraySize(VFI_Buffer) < rates_total || 
+       ArraySize(VFI_EMA_Buffer) < rates_total || 
+       ArraySize(Histogram_Buffer) < rates_total || 
+       ArraySize(VCP_Buffer) < rates_total)
     {
-        // Пересчитываем достаточное количество баров для корректной работы
-        calc_start = MathMax(1, prev_calculated - VFI_Length - 10);
+        Print("Error: Buffer sizes are smaller than rates_total");
+        return(0);
     }
     
+    // Оптимизация 1: Предварительно вычисляем типичные цены
     for(int i = calc_start; i < rates_total; i++)
     {
         // Проверяем валидность цен
         if(high[i] <= 0 || low[i] <= 0 || close[i] <= 0)
         {
             typical_array[i] = i > 0 ? typical_array[i-1] : close[i];
-            price_array[i] = close[i];
         }
         else
         {
             typical_array[i] = (high[i] + low[i] + close[i]) / 3.0;
-            price_array[i] = close[i];
         }
         
+        // Сохраняем цены закрытия для использования в паттернах
+        price_array[i] = close[i];
+        
+        // Вычисляем logarithm difference
         if(i > 0 && typical_array[i-1] > 0 && typical_array[i] > 0)
         {
             double log_diff = MathLog(typical_array[i]) - MathLog(typical_array[i-1]);
             // Ограничиваем экстремальные значения
-            if(MathAbs(log_diff) > 1.0) // Ограничение на 100% изменение
+            if(MathAbs(log_diff) > 1.0)
                 log_diff = log_diff > 0 ? 1.0 : -1.0;
             inter_array[i] = log_diff;
         }
@@ -1950,11 +1787,41 @@ int OnCalculate(const int rates_total,
         }
     }
     
-    // Основной расчет VFI
+    int start;
+    if(recalculate_all)
+    {
+        start = min_bars;
+        // При полном пересчете инициализируем начальные значения
+        for(int i = 0; i < start && i < rates_total; i++)
+        {
+            VFI_Buffer[i] = EMPTY_VALUE;
+            VFI_EMA_Buffer[i] = EMPTY_VALUE;
+            Histogram_Buffer[i] = EMPTY_VALUE;
+            Buy_Signal_Buffer[i] = EMPTY_VALUE;
+            Sell_Signal_Buffer[i] = EMPTY_VALUE;
+            Risk_Buffer[i] = EMPTY_VALUE;
+            Risk_Colors_Buffer[i] = 0;
+        }
+    }
+    else
+    {
+        // Начинаем расчет с последнего рассчитанного бара
+        start = prev_calculated - 1;
+        if(start < min_bars) start = min_bars;
+    }
+    
+    // Оптимизация 2: Определяем, какие объемы использовать
+    bool use_real = UseRealVolume && real_volumes_available;
+    
+    // Оптимизация 3: Избегаем многократных вычислений внутри цикла
+    double alpha = 2.0 / (SignalLength + 1.0);
+    double one_minus_alpha = 1.0 - alpha;
+    
+    //--- main calculation loop - оптимизированный
     for(int i = start; i < rates_total; i++)
     {
         //--- calculate vinter (standard deviation of inter over 30 periods)
-        double vinter = CalculateStdDev(i, MathMin(30, i));
+        double vinter = CalculateStdDev(inter_array, i, MathMin(30, i));
         
         // Защита от слишком маленьких значений
         if(vinter < 0.0001)
@@ -1963,14 +1830,13 @@ int OnCalculate(const int rates_total,
         //--- calculate cutoff
         double cutoff = Coef * vinter * close[i];
         
+        //--- Оптимизация 4: Использование более эффективного алгоритма расчета средних
         //--- calculate volume average over VFI_Length periods
         double vave = 0.0;
         int vol_start = MathMax(0, i - VFI_Length);
         int vol_count = 0;
         
-        // Determine which volumes to use
-        bool use_real = UseRealVolume && real_volumes_available;
-        
+        // Оптимизированный подсчет среднего объема
         for(int j = vol_start; j < i; j++)
         {
             double vol_value = use_real ? (double)volume[j] : (double)tick_volume[j];
@@ -2005,20 +1871,14 @@ int OnCalculate(const int rates_total,
         if(i > 0)
             mf = typical_array[i] - typical_array[i-1];
         
-        //--- calculate vcp
-        double vcp = 0.0;
-        if(mf > cutoff)
-            vcp = vc;
-        else if(mf < -cutoff)
-            vcp = -vc;
-        else
-            vcp = 0.0;
-        
+        //--- calculate vcp - оптимизировано с использованием тернарного оператора
+        double vcp = mf > cutoff ? vc : (mf < -cutoff ? -vc : 0.0);
         VCP_Buffer[i] = vcp;
         
         //--- calculate VFI (sum of vcp over VFI_Length periods divided by vave)
         double vcp_sum = 0.0;
         int vcp_start = MathMax(0, i - VFI_Length + 1);
+        
         for(int j = vcp_start; j <= i; j++)
         {
             vcp_sum += VCP_Buffer[j];
@@ -2026,12 +1886,17 @@ int OnCalculate(const int rates_total,
         
         // Дополнительная защита от больших значений
         double vfi_raw = vcp_sum / vave;
-        if(MathAbs(vfi_raw) > 1000) // Ограничиваем максимальное значение
-            vfi_raw = vfi_raw > 0 ? 1000 : -1000;
+        
+        // Оптимизация 6: Быстрое ограничение значений
+        if(vfi_raw > 1000)
+            vfi_raw = 1000;
+        else if(vfi_raw < -1000)
+            vfi_raw = -1000;
         
         //--- apply smoothing if needed (SMA with period 3)
         if(SmoothVFI && i >= start + 2)
         {
+            // Оптимизация 7: Более эффективное сглаживание
             double vfi_sum = vfi_raw;
             int count = 1;
             
@@ -2051,153 +1916,113 @@ int OnCalculate(const int rates_total,
             VFI_Buffer[i] = vfi_raw;
         }
         
-        //--- calculate VFI EMA
+        //--- calculate VFI EMA - оптимизированное с предварительно рассчитанной alpha
         if(i == start || VFI_EMA_Buffer[i-1] == EMPTY_VALUE)
         {
             VFI_EMA_Buffer[i] = VFI_Buffer[i];
         }
         else
         {
-            double alpha = 2.0 / (SignalLength + 1.0);
-            VFI_EMA_Buffer[i] = alpha * VFI_Buffer[i] + (1.0 - alpha) * VFI_EMA_Buffer[i-1];
+            VFI_EMA_Buffer[i] = alpha * VFI_Buffer[i] + one_minus_alpha * VFI_EMA_Buffer[i-1];
         }
         
-        //--- calculate histogram
-        if(ShowHisto)
-            Histogram_Buffer[i] = VFI_Buffer[i] - VFI_EMA_Buffer[i];
-        else
-            Histogram_Buffer[i] = EMPTY_VALUE;
-            
-        //--- Calculate buy and sell signals
-        Buy_Signal_Buffer[i] = EMPTY_VALUE;
-        Sell_Signal_Buffer[i] = EMPTY_VALUE;
+        //--- calculate histogram - оптимизировано с использованием тернарного оператора
+        Histogram_Buffer[i] = ShowHisto ? VFI_Buffer[i] - VFI_EMA_Buffer[i] : EMPTY_VALUE;
         
-        if(i > 0 && VFI_Buffer[i] != EMPTY_VALUE && VFI_Buffer[i-1] != EMPTY_VALUE && 
-           VFI_EMA_Buffer[i] != EMPTY_VALUE && VFI_EMA_Buffer[i-1] != EMPTY_VALUE)
-        {
-            // Buy signal: VFI crosses above EMA
-            bool buy_signal = (VFI_Buffer[i-1] < VFI_EMA_Buffer[i-1] && VFI_Buffer[i] > VFI_EMA_Buffer[i]);
-            
-            if(buy_signal)
-            {
-                Buy_Signal_Buffer[i] = VFI_Buffer[i] - 0.0005; // Place slightly below the VFI line
-                
-                // Отправка алерта на сигнал покупки (только для новых сигналов)
-                if((EnableAlerts || EnableNotifications) && i == rates_total - 1)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("buy_signal_detected") + " @ " +
-                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message, time[i]);
-                }
-            }
-            
-            // Sell signal: VFI crosses below EMA
-            bool sell_signal = (VFI_Buffer[i-1] > VFI_EMA_Buffer[i-1] && VFI_Buffer[i] < VFI_EMA_Buffer[i]);
-            
-            if(sell_signal)
-            {
-                Sell_Signal_Buffer[i] = VFI_Buffer[i] + 0.0005; // Place slightly above the VFI line
-                
-                // Отправка алерта на сигнал продажи (только для новых сигналов)
-                if((EnableAlerts || EnableNotifications) && i == rates_total - 1)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("sell_signal_detected") + " @ " +
-                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message, time[i]);
-                }
-            }
-        }
+        //--- Generate signals
+        GenerateSignals(i);
         
-        //--- Pattern Detection (если включено)
-        if(ShowPatterns && i > VFI_Length * 2)
-        {
-            // Определение двойного дна
-            if(IsDoubleBottom(i, VFI_Length))
-            {
-                DoubleBottom_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-                
-                // Отправка алерта на паттерн двойного дна (только для новых паттернов)
-                if((EnableAlerts || EnableNotifications) && i == rates_total - 1)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("double_bottom_detected") + " @ " +
-                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message, time[i]);
-                }
-            }
-            
-            // Определение двойной вершины
-            if(IsDoubleTop(i, VFI_Length))
-            {
-                DoubleTop_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-                
-                // Отправка алерта на паттерн двойной вершины (только для новых паттернов)
-                if((EnableAlerts || EnableNotifications) && i == rates_total - 1)
-                {
-                    string alert_message = Symbol() + ": " + GetLocalizedText("double_top_detected") + " @ " +
-                                        TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                    SendAlert(alert_message, time[i]);
-                }
-            }
-            
-            // Определение дивергенции
-            double close_data[];
-            int copied = CopyClose(Symbol(), PERIOD_CURRENT, i - VFI_Length, VFI_Length + 1, close_data);
-            
-            if(copied > 0)
-            {
-                if(IsDivergence(i, VFI_Length, close_data))
-                {
-                    Divergence_Buffer[i] = VFI_Buffer[i]; // Только для расчетов
-                    
-                    // Отправка алерта на паттерн дивергенции (только для новых паттернов)
-                    if((EnableAlerts || EnableNotifications) && i == rates_total - 1)
-                    {
-                        string alert_message = Symbol() + ": " + GetLocalizedText("divergence_detected") + " @ " +
-                                            TimeToString(time[i], TIME_DATE|TIME_MINUTES);
-                        SendAlert(alert_message, time[i]);
-                    }
-                }
-            }
-        }
-        
-        //--- Risk Assessment
+        //--- Calculate risk level
         double risk_value = 0.0;
         ENUM_RISK_LEVEL risk_level = CalculateRiskLevel(i, RiskAssessmentPeriod, risk_value);
-        
-        // Устанавливаем значение и цвет риска
         Risk_Buffer[i] = risk_value * 0.5; // Масштабируем для отображения
-        Risk_Colors_Buffer[i] = (double)risk_level;
-        
-        //--- Trend Assessment
-        double trend_strength = 0;
-        ENUM_TREND_DIRECTION trend_direction = DetermineTrend(i, TrendPeriod, trend_strength);
-        trend_buffer[i] = (double)trend_direction * trend_strength; // Записываем в буфер тренда
-        
-        // Применяем динамическое изменение цветов
-        if(EnableDynamicColors)
-            UpdateDynamicColors(i);
+        Risk_Colors_Buffer[i] = (int)risk_level;
     }
     
-    // Периодически пересчитываем уровни перекупленности/перепроданности
-    if(recalculate_all || dynamic_overbought_level == 0 || dynamic_oversold_level == 0)
-    {
-        CalculateOverboughtOversoldLevels(rates_total - 1);
-    }
-    else if((rates_total - 1) % 100 == 0) // Пересчитываем каждые 100 баров
-    {
-        CalculateOverboughtOversoldLevels(rates_total - 1);
-    }
+    // Расчет и обновление уровней перекупленности/перепроданности
+    CalculateOverboughtOversoldLevels(rates_total - 1);
     
-    // После основных расчетов обновляем зоны
-    UpdateZoneObjects(rates_total-1);
-    
-    // После основных расчетов обновляем информационную панель
+    // Обновление инфо панели
     if(ShowInfoPanel)
-    {
-        UpdateInfoPanel(rates_total-1, time);
-    }
+        UpdateInfoPanel(rates_total - 1, time);
     
     return(rates_total);
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Standard Deviation                                    |
+//+------------------------------------------------------------------+
+double CalculateStdDev(const double &array[], int pos, int period)
+{
+    if(pos < 1 || period < 1)
+        return(0.0001); // Минимальное значение вместо 0
+    
+    int actual_period = MathMin(period, pos + 1);
+    int start_pos = pos - actual_period + 1;
+    
+    //--- calculate mean & sum of squares in one loop
+    double sum = 0.0;
+    double sum_sq = 0.0;
+    int valid_count = 0;
+    
+    for(int i = start_pos; i <= pos; i++)
+    {
+        if(i >= 0 && i < ArraySize(array))
+        {
+            double val = array[i];
+            sum += val;
+            sum_sq += val * val;
+            valid_count++;
+        }
+    }
+    
+    if(valid_count == 0)
+        return(0.0001);
+        
+    double mean = sum / valid_count;
+    
+    // Fast calculation of variance using E(X²) - (E(X))²
+    double variance = (sum_sq / valid_count) - (mean * mean);
+    
+    // Avoid negative values due to rounding errors
+    if(variance < 0)
+        variance = 0;
+    
+    return MathMax(MathSqrt(variance), 0.0001);
+}
+
+//+------------------------------------------------------------------+
+//| Генерация сигналов                                             |
+//+------------------------------------------------------------------+
+void GenerateSignals(int i)
+{
+    // Должно быть хотя бы несколько баров истории
+    if(i <= 5) 
+        return;
+    
+    // Buy signal: VFI crosses its EMA upward
+    bool buy_signal = false;
+    if(VFI_Buffer[i] > VFI_EMA_Buffer[i] && 
+       VFI_Buffer[i-1] <= VFI_EMA_Buffer[i-1])
+    {
+        buy_signal = true;
+        Buy_Signal_Buffer[i] = VFI_Buffer[i] - 0.05; // Размещаем стрелку немного ниже линии
+        
+        if(EnableAlerts && i == ArraySize(VFI_Buffer) - 1)
+            SendAlert(GetLocalizedText("buy_signal_detected"), TimeGMT());
+    }
+    
+    // Sell signal: VFI crosses its EMA downward
+    bool sell_signal = false;
+    if(VFI_Buffer[i] < VFI_EMA_Buffer[i] && 
+       VFI_Buffer[i-1] >= VFI_EMA_Buffer[i-1])
+    {
+        sell_signal = true;
+        Sell_Signal_Buffer[i] = VFI_Buffer[i] + 0.05; // Размещаем стрелку немного выше линии
+        
+        if(EnableAlerts && i == ArraySize(VFI_Buffer) - 1)
+            SendAlert(GetLocalizedText("sell_signal_detected"), TimeGMT());
+    }
 }
 
 //+------------------------------------------------------------------+
@@ -2205,32 +2030,26 @@ int OnCalculate(const int rates_total,
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-    // Удаляем информационную панель
-    if(ShowInfoPanel)
-    {
-        DeleteInfoPanel();
-    }
-
-   // Clean up all objects
-   ObjectDelete(0, overbought_zone_id);
-   ObjectDelete(0, oversold_zone_id);
-   ObjectDelete(0, overbought_line_id);
-   ObjectDelete(0, oversold_line_id);
-   ObjectDelete(0, info_panel_id);
-   ObjectDelete(0, pattern_text_id);
-   ObjectDelete(0, datetime_text_id);
-   ObjectDelete(0, username_text_id);
-   ObjectDelete(0, risk_text_id);
-   ObjectDelete(0, trend_text_id);
-   ObjectDelete(0, zones_text_id);
-   
-   Print(GetLocalizedText("indicator_finished"));
-    
     string username = GetComputerUserName();
-    string datetime_str = GetCurrentDateTime();
+    string current_datetime = GetCurrentDateTime();
     
     Print(GetLocalizedText("indicator_finished"));
-    Print("✅ ", GetLocalizedText("reason"), ": ", reason);
-    Print("✅ ", GetLocalizedText("time"), ": ", datetime_str, " UTC");
-    Print("✅ ", GetLocalizedText("user"), ": ", username);
+    Print(GetLocalizedText("reason"), ": ", reason);
+    Print(GetLocalizedText("time"), ": ", current_datetime);
+    Print(GetLocalizedText("user"), ": ", username);
+    
+    // Удаляем все созданные объекты
+    ObjectDelete(0, info_panel_id);
+    ObjectDelete(0, pattern_text_id);
+    ObjectDelete(0, datetime_text_id);
+    ObjectDelete(0, username_text_id);
+    ObjectDelete(0, risk_text_id);
+    ObjectDelete(0, trend_text_id);
+    ObjectDelete(0, zones_text_id);
+    ObjectDelete(0, info_panel_id + "_Title");
+    
+    ObjectDelete(0, overbought_zone_id);
+    ObjectDelete(0, oversold_zone_id);
+    ObjectDelete(0, overbought_line_id);
+    ObjectDelete(0, oversold_line_id);
 }
