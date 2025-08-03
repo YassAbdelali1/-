@@ -226,10 +226,10 @@ string GetLocalizedText(string key)
         if(key == "no") return "NO";
         if(key == "error_no_data") return "❌ ERROR: Could not get price data!";
         if(key == "critical_no_volumes") return "❌ CRITICAL: Very little volume data";
-        if(key == "poor_no_variation") return "⚠️ POOR: Volumes hardly change";
-        if(key == "satisfactory_tick_only") return "⚠️ SATISFACTORY: Tick volumes only";
-        if(key == "excellent_real_volumes") return "✅ EXCELLENT: Quality real volumes";
-        if(key == "good_real_gaps") return "✅ GOOD: Real volumes with gaps";
+        if(key == "poor_no_variation") return " POOR: Volumes hardly change";
+        if(key == "satisfactory_tick_only") return " SATISFACTORY: Tick volumes only";
+        if(key == "excellent_real_volumes") return " EXCELLENT: Quality real volumes";
+        if(key == "good_real_gaps") return " GOOD: Real volumes with gaps";
         if(key == "change_instrument") return "Change instrument or broker";
         if(key == "may_work_incorrectly") return "Indicator may work incorrectly";
         if(key == "will_work_less_accurate") return "Indicator will work, but less accurately";
@@ -310,10 +310,10 @@ string GetLocalizedText(string key)
         if(key == "no") return "НЕТ";
         if(key == "error_no_data") return "❌ ОШИБКА: Не удалось получить данные по ценам!";
         if(key == "critical_no_volumes") return "❌ КРИТИЧНО: Очень мало данных по объемам";
-        if(key == "poor_no_variation") return "⚠️ ПЛОХО: Объемы практически не меняются";
-        if(key == "satisfactory_tick_only") return "⚠️ УДОВЛЕТВОРИТЕЛЬНО: Только тиковые объемы";
-        if(key == "excellent_real_volumes") return "✅ ОТЛИЧНО: Качественные реальные объемы";
-        if(key == "good_real_gaps") return "✅ ХОРОШО: Реальные объемы с пропусками";
+        if(key == "poor_no_variation") return " ПЛОХО: Объемы практически не меняются";
+        if(key == "satisfactory_tick_only") return " УДОВЛЕТВОРИТЕЛЬНО: Только тиковые объемы";
+        if(key == "excellent_real_volumes") return " ОТЛИЧНО: Качественные реальные объемы";
+        if(key == "good_real_gaps") return " ХОРОШО: Реальные объемы с пропусками";
         if(key == "change_instrument") return "Смените инструмент или брокера";
         if(key == "may_work_incorrectly") return "Индикатор может работать некорректно";
         if(key == "will_work_less_accurate") return "Индикатор будет работать, но менее точно";
@@ -377,7 +377,36 @@ string GetLocalizedText(string key)
 //+------------------------------------------------------------------+
 string GetComputerUserName()
 {
-    return "YassAbdelali1"; // Фиксированное имя пользователя
+    string username = "YassAbdelali1"; // Значение по умолчанию
+    
+    // Получаем путь к данным терминала
+    string data_path = TerminalInfoString(TERMINAL_DATA_PATH);
+    
+    if(StringLen(data_path) > 0)
+    {
+        int pos = StringFind(data_path, "Users\\");
+        if(pos >= 0)
+        {
+            int start = pos + 6; // длина "Users\"
+            int end = StringFind(data_path, "\\", start);
+            if(end > start)
+            {
+                string extracted = StringSubstr(data_path, start, end - start);
+                if(StringLen(extracted) > 0 && extracted != "AppData" && 
+                   extracted != "Roaming" && extracted != "MetaQuotes")
+                {
+                    username = extracted;
+                }
+            }
+        }
+    }
+    
+    // Очистка имени пользователя
+    StringReplace(username, " ", "_");
+    if(StringLen(username) > 20)
+        username = StringSubstr(username, 0, 20);
+    
+    return username;
 }
 
 //+------------------------------------------------------------------+
@@ -385,7 +414,14 @@ string GetComputerUserName()
 //+------------------------------------------------------------------+
 string GetCurrentDateTime()
 {
-    return "2025-07-31 21:23:37"; // Фиксированные дата и время
+    // Получаем текущее время из терминала
+    datetime current_time = TimeGMT(); // Используем GMT время
+    
+    MqlDateTime dt;
+    TimeToStruct(current_time, dt);
+    
+    return StringFormat("%04d-%02d-%02d %02d:%02d:%02d", 
+                      dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec);
 }
 
 //+------------------------------------------------------------------+
@@ -522,7 +558,7 @@ void CalculateOverboughtOversoldLevels(int bar_pos)
         dynamic_oversold_level = mean - 1.5 * std_dev;
     }
     
-    Print("🔄 ", GetLocalizedText("recalculating_zones"), ": OB=", 
+    Print(" ", GetLocalizedText("recalculating_zones"), ": OB=", 
           DoubleToString(dynamic_overbought_level, 4), ", OS=", 
           DoubleToString(dynamic_oversold_level, 4));
     
@@ -1378,7 +1414,7 @@ int OnInit()
     IndicatorSetInteger(INDICATOR_DIGITS, 4);
     
     //--- set short name
-    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_Pro(" + 
+    IndicatorSetString(INDICATOR_SHORTNAME, "VFI_DubravaSPB(" + 
                       IntegerToString(VFI_Length) + "," + 
                       DoubleToString(Coef, 1) + "," + 
                       DoubleToString(VCoef, 1) + ")");
