@@ -1,0 +1,89 @@
+//+------------------------------------------------------------------+
+//| Trade event  
+//+------------------------------------------------------------------+
+void OnTrade() {
+    // Обработка торговых событий
+    static int lastPositions = 0;
+    int currentPositions = PositionsTotal();
+    
+    // Если позиция была закрыта
+    if(currentPositions < lastPositions) {
+        // Проверяем последнюю закрытую сделку
+        HistorySelect(TimeCurrent() - 3600, TimeCurrent());
+        int deals = HistoryDealsTotal();
+        
+        if(deals > 0) {
+            ulong ticket = HistoryDealGetTicket(deals - 1);
+            if(ticket > 0) {
+                double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+                
+                if(profit < 0) {
+                    consecutiveLosses++;
+                } else if(profit > 0) {
+                    consecutiveLosses = 0;
+                }
+                
+                // Удаляем из отслеживания
+                RemovePositionTracking(ticket);
+            }
+        }
+    }
+    
+    lastPositions = currentPositions;
+}
+
+//+------------------------------------------------------------------+
+//| Helper Functions
+//+------------------------------------------------------------------+
+void GetTradingPairsForCurrency(string currency, string &result[]) {
+    ArrayResize(result, 0);
+    
+    for(int i = 0; i < ArraySize(validPairs); i++) {
+        if(StringFind(validPairs[i], currency) >= 0) {
+            int size = ArraySize(result);
+            ArrayResize(result, size + 1);
+            result[size] = validPairs[i];
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Get trade retcode description
+//+------------------------------------------------------------------+
+string GetTradeRetcodeDescription(uint retcode) {
+    switch(retcode) {
+        case TRADE_RETCODE_DONE: return "Успешно выполнено";
+        case TRADE_RETCODE_REQUOTE: return "Реквота";
+        case TRADE_RETCODE_REJECT: return "Запрос отклонен";
+        case TRADE_RETCODE_CANCEL: return "Запрос отменен трейдером";
+        case TRADE_RETCODE_PLACED: return "Ордер размещен";
+        case TRADE_RETCODE_DONE_PARTIAL: return "Выполнено частично";
+        case TRADE_RETCODE_ERROR: return "Ошибка обработки запроса";
+        case TRADE_RETCODE_TIMEOUT: return "Тайм-аут запроса";
+        case TRADE_RETCODE_INVALID: return "Неправильный запрос";
+        case TRADE_RETCODE_INVALID_VOLUME: return "Неправильный объем";
+        case TRADE_RETCODE_INVALID_PRICE: return "Неправильная цена";
+        case TRADE_RETCODE_INVALID_STOPS: return "Неправильные стопы";
+        case TRADE_RETCODE_TRADE_DISABLED: return "Торговля запрещена";
+        case TRADE_RETCODE_MARKET_CLOSED: return "Рынок закрыт";
+        case TRADE_RETCODE_NO_MONEY: return "Недостаточно средств";
+        case TRADE_RETCODE_PRICE_CHANGED: return "Цена изменилась";
+        case TRADE_RETCODE_NO_CHANGES: return "Нет изменений";
+        case TRADE_RETCODE_SERVER_DISABLES_AT: return "Автоторговля запрещена сервером";
+        case TRADE_RETCODE_CLIENT_DISABLES_AT: return "Автоторговля запрещена терминалом";
+        case TRADE_RETCODE_LOCKED: return "Запрос заблокирован";
+        case TRADE_RETCODE_FROZEN: return "Ордер заморожен";
+        case TRADE_RETCODE_INVALID_FILL: return "Неверный тип исполнения";
+        case TRADE_RETCODE_CONNECTION: return "Нет соединения";
+        default: return "Неизвестная ошибка";
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Check for updates in panel
+//+------------------------------------------------------------------+
+void UpdateNewsPanel() {
+    if(ShowNewsPanel && !isTesting) {
+        newsPanel.Update(newsCalendar, ArraySize(newsCalendar), lastNewsCheck, NewsMinutesBefore);
+    }
+}
