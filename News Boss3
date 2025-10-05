@@ -1,0 +1,993 @@
+// Получаем ticket последней позиции
+                ulong ticket = 0;
+                for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                    if(PositionSelectByTicket(PositionGetTicket(i))) {
+                        if(PositionGetString(POSITION_SYMBOL) == setup.symbol &&
+                           PositionGetInteger(POSITION_MAGIC) == MagicNumber) {
+                            ticket = PositionGetTicket(i);
+                            RegisterPosition(ticket, setup.symbol, currentPrice, sl);
+                            break;
+                        }
+                    }
+                }
+                if(ticket > 0) {
+                    RegisterOrderForNews(ticket, news.time, news.title, news.currency);
+                }
+            }
+        }
+        
+        pullbackSetups[setupIndex].isActive = false; // Деактивируем сетап после входа
+    }
+    
+    int FindActiveSetup(string symbol) {
+        for(int i = 0; i < ArraySize(pullbackSetups); i++) {
+            if(pullbackSetups[i].symbol == symbol && pullbackSetups[i].isActive) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    
+    double GetCurrentATR(string symbol) {
+        int atrHandleLocal = iATR(symbol, PERIOD_M15, ATRPeriod);
+        double atrBuffer[];
+        if(CopyBuffer(atrHandleLocal, 0, 0, 1, atrBuffer) > 0) {
+            IndicatorRelease(atrHandleLocal);
+            return atrBuffer[0];
+        }
+        return 0;
+    }
+    
+    // Функция для очистки неактивных сетапов (вызывать периодически)
+    void CleanupInactiveSetups() {
+        PullbackSetup tempSetups[];
+        int tempCount = 0;
+        
+        for(int i = 0; i < ArraySize(pullbackSetups); i++) {
+            if(pullbackSetups[i].isActive || 
+               TimeCurrent() - pullbackSetups[i].setupTime < 3600) { // Храним историю час
+                ArrayResize(tempSetups, tempCount + 1);
+                tempSetups[tempCount] = pullbackSetups[i];
+                tempCount++;
+            }
+        }
+        
+        ArrayResize(pullbackSetups, tempCount);
+        for(int i = 0; i < tempCount; i++) {
+            pullbackSetups[i] = tempSetups[i];
+        }
+    }
+    
+    double GetBreakoutLevel(string symbol) {
+        double high = iHigh(symbol, PERIOD_M15, iHighest(symbol, PERIOD_M15, MODE_HIGH, 20, 1));
+        double low = iLow(symbol, PERIOD_M15, iLowest(symbol, PERIOD_M15, MODE_LOW, 20, 1));
+        double currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        
+        return (currentPrice > (high + low) / 2) ? high : low;
+    }
+    
+    bool IsValidPullback(string symbol, double breakoutLevel, double ratio) {
+        double currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        double retracement = MathAbs(currentPrice - breakoutLevel) / currentATR;
+        
+        return (retracement >= ratio * 0.8 && retracement <= ratio * 1.2);
+    }
+};
+
+CTradingStrategy strategy;
+
+//+------------------------------------------------------------------+
+//| Tester News Manager Class
+//+------------------------------------------------------------------+
+class CTesterNewsManager {
+private:
+    string dataPath;
+    
+public:
+    CTesterNewsManager() {
+        dataPath = NewsDataPath;
+    }
+    
+    bool LoadNewsForMonth(datetime currentTime, NewsEvent &newsArray[]) {
+        MqlDateTime dt;
+        TimeToStruct(currentTime, dt);
+        
+        string filename = StringFormat("%02d%04d.csv", dt.mon, dt.year);
+        
+        int fileHandle = INVALID_HANDLE;
+        
+        // Попытка 1: Просто имя файла (для тестера)
+        fileHandle = FileOpen(filename, FILE_READ|FILE_TXT|FILE_ANSI);
+        
+        // Попытка 2: С подпапкой NewsData
+        if(fileHandle == INVALID_HANDLE && NewsDataPath != "") {
+            string filepath = NewsDataPath + "\\" + filename;
+            fileHandle = FileOpen(filepath, FILE_READ|FILE_TXT|FILE_ANSI);
+        }
+        
+        // Попытка 3: Использовать FILE_COMMON для доступа к общей папке
+        if(fileHandle == INVALID_HANDLE) {
+            fileHandle = FileOpen(filename, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
+        }
+        
+        // Попытка 4: FILE_COMMON с подпапкой
+        if(fileHandle == INVALID_HANDLE && NewsDataPath != "") {
+            string filepath = NewsDataPath + "\\" + filename;
+            fileHandle = FileOpen(filepath, FILE_READ|FILE_TXT|FILE_ANSI|FILE_COMMON);
+        }
+        
+        if(fileHandle == INVALID_HANDLE) {
+            return false;
+        }
+        
+        ArrayResize(newsArray, 0);
+        int count = 0;
+        int lineNumber = 0;
+        
+        // Пропускаем заголовок если есть
+        string firstLine = FileReadString(fileHandle);
+        if(StringFind(firstLine, "DateTime") >= 0) {
+            lineNumber = 1;
+        } else {
+            FileSeek(fileHandle, 0, SEEK_SET);
+            lineNumber = 0;
+        }
+        
+        // Читаем данные
+        while(!FileIsEnding(fileHandle)) {
+            lineNumber++;
+            string line = FileReadString(fileHandle);
+            
+            if(line == "") continue;
+            
+            // Разбиваем строку по запятым
+            string fields[];
+            int fieldCount = StringSplit(line, ',', fields);
+            
+            if(fieldCount < 6) {
+                continue;
+            }
+            
+            // Парсим поля
+            NewsEvent news;
+            
+            // DateTime
+            news.time = StringToTime(fields[0]);
+            if(news.time == 0) {
+                continue;
+            }
+            
+            // Currency
+            string currencyStr = fields[1];
+            StringTrimLeft(currencyStr);
+            StringTrimRight(currencyStr);
+            StringReplace(currencyStr, "\"", "");
+            
+            // Title
+            news.title = fields[2];
+            StringReplace(news.title, "\"", "");
+            
+            // Impact
+            news.impact = (int)StringToInteger(fields[3]);
+            
+            // Forecast
+            if(fields[4] != "" && fields[4] != "-") {
+                news.forecast = StringToDouble(fields[4]);
+                news.hasForecast = true;
+            } else {
+                news.forecast = 0;
+                news.hasForecast = false;
+            }
+            
+            // Previous
+            news.previous = StringToDouble(fields[5]);
+            
+            news.actual = 0;
+            news.processed = false;
+            news.actualReleased = false;
+            
+            // Обрабатываем множественные валюты
+            string currencies[];
+            int currencyCount = StringSplit(currencyStr, ' ', currencies);
+            
+            for(int i = 0; i < currencyCount; i++) {
+                string currency = currencies[i];
+                StringTrimLeft(currency);
+                StringTrimRight(currency);
+                
+                if(StringLen(currency) == 3) {
+                    NewsEvent newsCopy = news;
+                    newsCopy.currency = currency;
+                    
+                    ArrayResize(newsArray, count + 1);
+                    newsArray[count] = newsCopy;
+                    count++;
+                }
+            }
+        }
+        
+        FileClose(fileHandle);
+        
+        return count > 0;
+    }
+    
+    void GenerateActualValue(NewsEvent &news) {
+        if(news.actualReleased) return;
+        
+        // Для фундаментальной стратегии важно генерировать значительные отклонения
+        if(TradingStrategy == STRATEGY_FUNDAMENTAL) {
+            if(news.hasForecast) {
+                // Генерируем более выраженные отклонения для фундаментальной стратегии
+                double baseVariation = (MathRand() % 2001 - 1000) / 1000.0; // от -1 до 1
+                
+                // Увеличиваем вероятность больших отклонений
+                if(MathRand() % 100 < 30) { // 30% вероятность большого отклонения
+                    baseVariation *= 2.0; // Удваиваем отклонение
+                }
+                
+                double variation = baseVariation * ActualVariation / 100.0;
+                news.actual = news.forecast * (1 + variation);
+                
+            } else {
+                // Для новостей без прогноза также генерируем значительные изменения
+                if(news.previous != 0) {
+                    double variation = (MathRand() % 1501 - 750) / 1000.0; // от -0.75 до 0.75
+                    news.actual = news.previous * (1 + variation * ActualVariation / 100.0);
+                } else {
+                    // Генерируем значения на основе типа новости
+                    if(StringFind(news.title, "Rate") >= 0 || StringFind(news.title, "CPI") >= 0) {
+                        news.actual = 2.0 + (MathRand() % 300) / 100.0; // 2.0-5.0
+                    } else if(StringFind(news.title, "GDP") >= 0) {
+                        news.actual = -2.0 + (MathRand() % 800) / 100.0; // -2.0 до 6.0
+                    } else if(StringFind(news.title, "Employment") >= 0 || StringFind(news.title, "NFP") >= 0) {
+                        news.actual = 50 + (MathRand() % 500); // 50-550K
+                    } else {
+                        news.actual = (MathRand() % 2000 - 1000) / 10.0; // -100 до 100
+                    }
+                }
+            }
+            
+            // Для фундаментальной стратегии увеличиваем волатильность еще больше
+            currentATR *= 1.5;
+            
+        } else {
+            // Обычная генерация для других стратегий
+            if(news.hasForecast) {
+                double variation = (MathRand() % 2001 - 1000) / 1000.0; // от -1 до 1
+                variation = variation * ActualVariation / 100.0;
+                
+                news.actual = news.forecast * (1 + variation);
+                
+                // Добавляем случайные сюрпризы (10% вероятность)
+                if(MathRand() % 100 < 10) {
+                    double surprise = (MathRand() % 2 == 0) ? 1.5 : 0.5;
+                    news.actual *= surprise;
+                    currentATR *= SurpriseVolatilityMultiplier;
+                }
+            } else {
+                if(news.previous != 0) {
+                    double variation = (MathRand() % 1001 - 500) / 1000.0;
+                    news.actual = news.previous * (1 + variation * ActualVariation / 100.0);
+                } else {
+                    // Стандартная генерация
+                    if(StringFind(news.title, "Rate") >= 0 || StringFind(news.title, "CPI") >= 0) {
+                        news.actual = 2.0 + (MathRand() % 300) / 100.0;
+                    } else if(StringFind(news.title, "GDP") >= 0) {
+                        news.actual = -2.0 + (MathRand() % 600) / 100.0;
+                    } else if(StringFind(news.title, "Employment") >= 0 || StringFind(news.title, "NFP") >= 0) {
+                        news.actual = 50 + (MathRand() % 400);
+                    } else {
+                        news.actual = (MathRand() % 1000 - 500) / 10.0;
+                    }
+                }
+                
+                currentATR *= 1.3;
+            }
+        }
+        
+        news.actualReleased = true;
+    }
+    
+    void UpdateActualsForCurrentTime(NewsEvent &newsArray[]) {
+        datetime currentTime = TimeCurrent();
+        
+        for(int i = 0; i < ArraySize(newsArray); i++) {
+            // Если время новости прошло, генерируем actual
+            if(newsArray[i].time <= currentTime && !newsArray[i].actualReleased) {
+                GenerateActualValue(newsArray[i]);
+            }
+        }
+    }
+    
+    void CreateSampleNewsFile() {
+        // Создает пример файла новостей для тестирования
+        MqlDateTime dt;
+        TimeToStruct(TimeCurrent(), dt);
+        
+        string filename = StringFormat("%02d%04d_sample.csv", dt.mon, dt.year);
+        string filepath = NewsDataPath + "\\" + filename;
+        
+        int fileHandle = FileOpen(filepath, FILE_WRITE|FILE_CSV|FILE_ANSI, ',');
+        if(fileHandle == INVALID_HANDLE) {
+            Print("Не удалось создать файл примера");
+            return;
+        }
+        
+        // Записываем заголовок
+        FileWrite(fileHandle, "DateTime", "Currency", "Title", "Impact", "Forecast", "Previous");
+        
+        // Примеры новостей
+        string baseDate = StringFormat("%04d.%02d.", dt.year, dt.mon);
+        
+        // NFP (первая пятница месяца)
+        FileWrite(fileHandle, baseDate + "01 13:30", "USD", "Non-Farm Employment Change", "3", "200", "185");
+        FileWrite(fileHandle, baseDate + "01 13:30", "USD", "Unemployment Rate", "3", "3.7", "3.8");
+        
+        // ECB Rate Decision (обычно в четверг)
+        FileWrite(fileHandle, baseDate + "06 12:45", "EUR", "ECB Interest Rate Decision", "3", "4.5", "4.5");
+        FileWrite(fileHandle, baseDate + "06 13:30", "EUR", "ECB Press Conference", "3", "", "0");
+        
+        // UK GDP
+        FileWrite(fileHandle, baseDate + "10 07:00", "GBP", "GDP q/q", "3", "0.3", "0.2");
+        FileWrite(fileHandle, baseDate + "10 07:00", "GBP", "Manufacturing Production m/m", "2", "0.2", "0.1");
+        
+        // Japan CPI
+        FileWrite(fileHandle, baseDate + "15 00:30", "JPY", "Core CPI y/y", "2", "2.1", "2.0");
+        
+        // US CPI
+        FileWrite(fileHandle, baseDate + "12 13:30", "USD", "Core CPI m/m", "3", "0.3", "0.2");
+        FileWrite(fileHandle, baseDate + "12 13:30", "USD", "CPI y/y", "3", "3.2", "3.1");
+        
+        // NZD Retail Sales
+        FileWrite(fileHandle, baseDate + "20 22:45", "NZD", "Retail Sales q/q", "2", "0.8", "0.7");
+        
+        FileClose(fileHandle);
+        
+        Print("Создан файл примера новостей: ", filepath);
+    }
+};
+
+CTesterNewsManager testerNewsManager;
+
+//+------------------------------------------------------------------+
+//| News Panel Class
+//+------------------------------------------------------------------+
+class CNewsPanel {
+private:
+    int panelX;
+    int panelY;
+    int panelWidth;
+    int panelHeight;
+    color backgroundColor;
+    color textColor;
+    int fontSize;
+    bool isVisible;
+    
+public:
+    CNewsPanel() {
+        panelX = 10;
+        panelY = 50;
+        panelWidth = 500;
+        panelHeight = 180;
+        backgroundColor = clrBlack;
+        textColor = clrWhite;
+        fontSize = 8;
+        isVisible = false;
+    }
+    
+    void SetPosition(int x, int y) {
+        panelX = x;
+        panelY = y;
+    }
+    
+    void SetColors(color bgColor, color txtColor) {
+        backgroundColor = bgColor;
+        textColor = txtColor;
+    }
+    
+    void SetWidth(int width) {
+        panelWidth = width;
+    }
+    
+    void SetFontSize(int size) {
+        fontSize = size;
+    }
+    
+    void Create() {
+        if(isVisible) return;
+        
+        // Рассчитываем высоту панели в зависимости от количества новостей
+        int newsCount = MathMin(PanelNewsCount, 10);
+        panelHeight = 80 + (newsCount * 25);
+        
+        // Create main panel background
+        string panelName = "NewsPanel_Background";
+        ObjectCreate(0, panelName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, panelName, OBJPROP_XDISTANCE, panelX);
+        ObjectSetInteger(0, panelName, OBJPROP_YDISTANCE, panelY);
+        ObjectSetInteger(0, panelName, OBJPROP_XSIZE, panelWidth);
+        ObjectSetInteger(0, panelName, OBJPROP_YSIZE, panelHeight);
+        ObjectSetInteger(0, panelName, OBJPROP_BGCOLOR, backgroundColor);
+        ObjectSetInteger(0, panelName, OBJPROP_BORDER_TYPE, BORDER_RAISED);
+        ObjectSetInteger(0, panelName, OBJPROP_COLOR, clrGray);
+        ObjectSetInteger(0, panelName, OBJPROP_STYLE, STYLE_SOLID);
+        ObjectSetInteger(0, panelName, OBJPROP_WIDTH, 2);
+        ObjectSetInteger(0, panelName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        ObjectSetInteger(0, panelName, OBJPROP_BACK, false);
+        
+        // Create header
+        string headerName = "NewsPanel_Header";
+        ObjectCreate(0, headerName, OBJ_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, headerName, OBJPROP_XDISTANCE, panelX + 10);
+        ObjectSetInteger(0, headerName, OBJPROP_YDISTANCE, panelY + 5);
+        ObjectSetString(0, headerName, OBJPROP_TEXT, "БЛИЖАЙШИЕ НОВОСТИ FOREXFACTORY");
+        ObjectSetString(0, headerName, OBJPROP_FONT, "Arial Bold");
+        ObjectSetInteger(0, headerName, OBJPROP_FONTSIZE, 10);
+        ObjectSetInteger(0, headerName, OBJPROP_COLOR, textColor);
+        ObjectSetInteger(0, headerName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        
+        // Create separator line
+        string separatorName = "NewsPanel_Separator";
+        ObjectCreate(0, separatorName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, separatorName, OBJPROP_XDISTANCE, panelX + 5);
+        ObjectSetInteger(0, separatorName, OBJPROP_YDISTANCE, panelY + 22);
+        ObjectSetInteger(0, separatorName, OBJPROP_XSIZE, panelWidth - 10);
+        ObjectSetInteger(0, separatorName, OBJPROP_YSIZE, 1);
+        ObjectSetInteger(0, separatorName, OBJPROP_BGCOLOR, clrGray);
+        ObjectSetInteger(0, separatorName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+        ObjectSetInteger(0, separatorName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        ObjectSetInteger(0, separatorName, OBJPROP_BACK, false);
+        
+        // Create column headers
+        CreateColumnHeader("NewsPanel_ColTime", panelX + 10, panelY + 28, "ВРЕМЯ");
+        CreateColumnHeader("NewsPanel_ColCurrency", panelX + 100, panelY + 28, "ВАЛЮТА");
+        CreateColumnHeader("NewsPanel_ColImpact", panelX + 155, panelY + 28, "ВАЖН.");
+        CreateColumnHeader("NewsPanel_ColEvent", panelX + 205, panelY + 28, "СОБЫТИЕ");
+        CreateColumnHeader("NewsPanel_ColForecast", panelX + 350, panelY + 28, "ПРОГН.");
+        CreateColumnHeader("NewsPanel_ColActual", panelX + 400, panelY + 28, "ФАКТ");
+        
+        // Create refresh button
+        string refreshButton = "NewsPanel_RefreshBtn";
+        ObjectCreate(0, refreshButton, OBJ_BUTTON, 0, 0, 0);
+        ObjectSetInteger(0, refreshButton, OBJPROP_XDISTANCE, panelX + panelWidth - 50);
+        ObjectSetInteger(0, refreshButton, OBJPROP_YDISTANCE, panelY + 3);
+        ObjectSetInteger(0, refreshButton, OBJPROP_XSIZE, 30);
+        ObjectSetInteger(0, refreshButton, OBJPROP_YSIZE, 15);
+        ObjectSetString(0, refreshButton, OBJPROP_TEXT, "⟳");
+        ObjectSetString(0, refreshButton, OBJPROP_FONT, "Arial");
+        ObjectSetInteger(0, refreshButton, OBJPROP_FONTSIZE, 10);
+        ObjectSetInteger(0, refreshButton, OBJPROP_COLOR, clrWhite);
+        ObjectSetInteger(0, refreshButton, OBJPROP_BGCOLOR, clrDarkGray);
+        ObjectSetInteger(0, refreshButton, OBJPROP_BORDER_COLOR, clrGray);
+        ObjectSetInteger(0, refreshButton, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        
+        // Create last update time label
+        string updateTimeName = "NewsPanel_UpdateTime";
+        ObjectCreate(0, updateTimeName, OBJ_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, updateTimeName, OBJPROP_XDISTANCE, panelX + 10);
+        ObjectSetInteger(0, updateTimeName, OBJPROP_YDISTANCE, panelY + panelHeight - 18);
+        ObjectSetString(0, updateTimeName, OBJPROP_TEXT, "Последнее обновление: ---");
+        ObjectSetString(0, updateTimeName, OBJPROP_FONT, "Arial");
+        ObjectSetInteger(0, updateTimeName, OBJPROP_FONTSIZE, 7);
+        ObjectSetInteger(0, updateTimeName, OBJPROP_COLOR, clrGray);
+        ObjectSetInteger(0, updateTimeName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        
+        isVisible = true;
+    }
+    
+    void Update(NewsEvent &newsArray[], int totalNews, datetime lastUpdate, int newsMinutesBefore) {
+        if(!isVisible) return;
+        
+        // Update header with count
+        string headerName = "NewsPanel_Header";
+        string statusIcon = "●";
+        color statusColor = totalNews > 0 ? clrLime : clrRed;
+        
+        // Create/update status indicator
+        string statusName = "NewsPanel_Status";
+        if(ObjectFind(0, statusName) < 0) {
+            ObjectCreate(0, statusName, OBJ_LABEL, 0, 0, 0);
+            ObjectSetInteger(0, statusName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+        }
+        ObjectSetInteger(0, statusName, OBJPROP_XDISTANCE, panelX + panelWidth - 15);
+        ObjectSetInteger(0, statusName, OBJPROP_YDISTANCE, panelY + 5);
+        ObjectSetString(0, statusName, OBJPROP_TEXT, statusIcon);
+        ObjectSetString(0, statusName, OBJPROP_FONT, "Arial");
+        ObjectSetInteger(0, statusName, OBJPROP_FONTSIZE, 10);
+        ObjectSetInteger(0, statusName, OBJPROP_COLOR, statusColor);
+        
+        string headerText = StringFormat("БЛИЖАЙШИЕ НОВОСТИ %s (Всего: %d)", 
+                                       isTesting ? "ТЕСТЕР" : "FOREXFACTORY", totalNews);
+        ObjectSetString(0, headerName, OBJPROP_TEXT, headerText);
+        
+        // Update last update time
+        string updateTimeName = "NewsPanel_UpdateTime";
+        if(lastUpdate > 0) {
+            string updateText = StringFormat("Последнее обновление: %s (GMT%+d)", 
+                                           TimeToString(lastUpdate, TIME_DATE|TIME_MINUTES),
+                                           brokerGMTOffset);
+            ObjectSetString(0, updateTimeName, OBJPROP_TEXT, updateText);
+        }
+        
+        // Get upcoming news (max 5)
+        NewsEvent upcomingNews[];
+        int maxNewsCount = MathMin(PanelNewsCount, 10);
+        int upcomingCount = GetUpcomingNews(newsArray, upcomingNews, maxNewsCount);
+        
+        // Update rows
+        int rowHeight = 25;
+        int startY = panelY + 45;
+        
+        for(int i = 0; i < maxNewsCount; i++) {
+            string rowPrefix = "NewsPanel_Row" + IntegerToString(i);
+            int currentY = startY + (i * rowHeight);
+            
+            if(i < upcomingCount) {
+                // Calculate minutes to news
+                int minutesToNews = (int)((upcomingNews[i].time - TimeCurrent()) / 60);
+                
+                // Time with countdown
+                string timeDisplay = TimeToString(upcomingNews[i].time, TIME_DATE|TIME_MINUTES);
+                if(minutesToNews >= 0 && minutesToNews < 1440) {
+                    timeDisplay = StringFormat("%s (%d м)", TimeToString(upcomingNews[i].time, TIME_MINUTES), minutesToNews);
+                }
+                UpdateNewsCell(rowPrefix + "_Time", panelX + 10, currentY, 
+                              timeDisplay, textColor, fontSize);
+                
+                // Currency
+                UpdateNewsCell(rowPrefix + "_Currency", panelX + 100, currentY, 
+                              upcomingNews[i].currency, clrCyan, fontSize + 1);
+                
+                // Impact
+                string impact = "";
+                color impactColor = clrGray;
+                switch(upcomingNews[i].impact) {
+                    case 3: impact = "HIGH"; impactColor = clrRed; break;
+                    case 2: impact = "MED"; impactColor = clrOrange; break;
+                    case 1: impact = "LOW"; impactColor = clrYellow; break;
+                    default: impact = "---"; impactColor = clrGray; break;
+                }
+                UpdateNewsCell(rowPrefix + "_Impact", panelX + 155, currentY, 
+                              impact, impactColor, fontSize);
+                
+                // Event title
+                string title = upcomingNews[i].title;
+                if(StringLen(title) > 20) {
+                    title = StringSubstr(title, 0, 17) + "...";
+                }
+                UpdateNewsCell(rowPrefix + "_Event", panelX + 205, currentY, 
+                              title, textColor, fontSize);
+                
+                // Forecast
+                string forecast = upcomingNews[i].hasForecast ? DoubleToString(upcomingNews[i].forecast, 2) : "---";
+                UpdateNewsCell(rowPrefix + "_Forecast", panelX + 350, currentY, 
+                              forecast, clrLightBlue, fontSize);
+                
+                // Actual
+                string actual = upcomingNews[i].actual != 0 ? DoubleToString(upcomingNews[i].actual, 2) : "---";
+                color actualColor = clrGray;
+                if(upcomingNews[i].actual != 0 && upcomingNews[i].hasForecast) {
+                    actualColor = upcomingNews[i].actual > upcomingNews[i].forecast ? clrLime : clrRed;
+                }
+                UpdateNewsCell(rowPrefix + "_Actual", panelX + 400, currentY, 
+                              actual, actualColor, fontSize);
+                
+                // Highlight if news is coming soon
+                UpdateHighlight(rowPrefix, currentY, minutesToNews, newsMinutesBefore);
+            } else {
+                // Clear row
+                UpdateNewsCell(rowPrefix + "_Time", panelX + 10, currentY, "---", clrGray, fontSize);
+                UpdateNewsCell(rowPrefix + "_Currency", panelX + 100, currentY, "---", clrGray, fontSize);
+                UpdateNewsCell(rowPrefix + "_Impact", panelX + 155, currentY, "---", clrGray, fontSize);
+                UpdateNewsCell(rowPrefix + "_Event", panelX + 205, currentY, "---", clrGray, fontSize);
+                UpdateNewsCell(rowPrefix + "_Forecast", panelX + 350, currentY, "---", clrGray, fontSize);
+                UpdateNewsCell(rowPrefix + "_Actual", panelX + 400, currentY, "---", clrGray, fontSize);
+                
+                // Remove highlight
+                string highlightName = rowPrefix + "_Highlight";
+                if(ObjectFind(0, highlightName) >= 0) {
+                    ObjectDelete(0, highlightName);
+                }
+            }
+        }
+    }
+    
+    void Delete() {
+        ObjectDelete(0, "NewsPanel_Background");
+        ObjectDelete(0, "NewsPanel_Header");
+        ObjectDelete(0, "NewsPanel_Status");
+        ObjectDelete(0, "NewsPanel_RefreshBtn");
+        ObjectDelete(0, "NewsPanel_Separator");
+        ObjectDelete(0, "NewsPanel_UpdateTime");
+        ObjectDelete(0, "NewsPanel_ColTime");
+        ObjectDelete(0, "NewsPanel_ColCurrency");
+        ObjectDelete(0, "NewsPanel_ColImpact");
+        ObjectDelete(0, "NewsPanel_ColEvent");
+        ObjectDelete(0, "NewsPanel_ColForecast");
+        ObjectDelete(0, "NewsPanel_ColActual");
+        
+        for(int i = 0; i < 10; i++) {
+            string rowPrefix = "NewsPanel_Row" + IntegerToString(i);
+            ObjectDelete(0, rowPrefix + "_Time");
+            ObjectDelete(0, rowPrefix + "_Currency");
+            ObjectDelete(0, rowPrefix + "_Impact");
+            ObjectDelete(0, rowPrefix + "_Event");
+            ObjectDelete(0, rowPrefix + "_Forecast");
+            ObjectDelete(0, rowPrefix + "_Actual");
+            ObjectDelete(0, rowPrefix + "_Highlight");
+        }
+        
+        isVisible = false;
+    }
+    
+    bool IsRefreshClicked(string sparam) {
+        return (sparam == "NewsPanel_RefreshBtn");
+    }
+    
+private:
+    void CreateColumnHeader(string name, int x, int y, string text) {
+        ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+        ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+        ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+        ObjectSetString(0, name, OBJPROP_TEXT, text);
+        ObjectSetString(0, name, OBJPROP_FONT, "Arial");
+        ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, clrYellow);
+        ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+    }
+    
+    void UpdateNewsCell(string name, int x, int y, string text, color cellColor, int cellFontSize) {
+        if(ObjectFind(0, name) < 0) {
+            ObjectCreate(0, name, OBJ_LABEL, 0, 0, 0);
+        }
+        ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+        ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+        ObjectSetString(0, name, OBJPROP_TEXT, text);
+        ObjectSetString(0, name, OBJPROP_FONT, "Arial");
+        ObjectSetInteger(0, name, OBJPROP_FONTSIZE, cellFontSize > 0 ? cellFontSize : fontSize);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, cellColor);
+        ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+    }
+    
+    void UpdateHighlight(string rowPrefix, int y, int minutesToNews, int newsMinutesBefore) {
+        string highlightName = rowPrefix + "_Highlight";
+        
+        if(minutesToNews <= newsMinutesBefore && minutesToNews >= 0) {
+            if(ObjectFind(0, highlightName) < 0) {
+                ObjectCreate(0, highlightName, OBJ_RECTANGLE_LABEL, 0, 0, 0);
+                ObjectSetInteger(0, highlightName, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+                ObjectSetInteger(0, highlightName, OBJPROP_BACK, true);
+            }
+            
+            ObjectSetInteger(0, highlightName, OBJPROP_XDISTANCE, panelX + 5);
+            ObjectSetInteger(0, highlightName, OBJPROP_YDISTANCE, y - 2);
+            ObjectSetInteger(0, highlightName, OBJPROP_XSIZE, panelWidth - 10);
+            ObjectSetInteger(0, highlightName, OBJPROP_YSIZE, 20);
+            
+            // Blinking effect for urgent news
+            if(minutesToNews <= 5) {
+                int seconds = (int)(TimeCurrent() % 2);
+                ObjectSetInteger(0, highlightName, OBJPROP_BGCOLOR, seconds == 0 ? clrDarkRed : clrDarkGreen);
+            } else {
+                ObjectSetInteger(0, highlightName, OBJPROP_BGCOLOR, clrDarkGreen);
+            }
+            
+            ObjectSetInteger(0, highlightName, OBJPROP_BORDER_TYPE, BORDER_FLAT);
+        } else {
+            if(ObjectFind(0, highlightName) >= 0) {
+                ObjectDelete(0, highlightName);
+            }
+        }
+    }
+    
+    int GetUpcomingNews(NewsEvent &allNews[], NewsEvent &result[], int maxCount) {
+        ArrayResize(result, 0);
+        datetime current = TimeCurrent();
+        int count = 0;
+        
+        // Сначала добавляем новости, которые еще не вышли
+        for(int i = 0; i < ArraySize(allNews) && count < maxCount; i++) {
+            if(allNews[i].time >= current) {
+                // Проверяем релевантность через глобальный указатель
+                if(newsManagerPtr != NULL && newsManagerPtr.IsCurrencyRelevant(allNews[i].currency)) {
+                    ArrayResize(result, count + 1);
+                    result[count] = allNews[i];
+                    count++;
+                }
+            }
+        }
+        
+        // Если есть место, добавляем недавние новости за NewsHistoryHours часов
+        if(count < maxCount) {
+            for(int i = ArraySize(allNews) - 1; i >= 0 && count < maxCount; i--) {
+                if(allNews[i].time < current && 
+                   allNews[i].time >= current - (NewsHistoryHours * 3600)) {
+                    if(newsManagerPtr != NULL && newsManagerPtr.IsCurrencyRelevant(allNews[i].currency)) {
+                        // Проверяем, не добавили ли мы уже эту новость
+                        bool alreadyAdded = false;
+                        for(int j = 0; j < count; j++) {
+                            if(result[j].time == allNews[i].time && 
+                               result[j].currency == allNews[i].currency &&
+                               result[j].title == allNews[i].title) {
+                                alreadyAdded = true;
+                                break;
+                            }
+                        }
+                        
+                        if(!alreadyAdded) {
+                            ArrayResize(result, count + 1);
+                            result[count] = allNews[i];
+                            count++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        return count;
+    }
+};
+
+// Global news panel object
+CNewsPanel newsPanel;
+
+//+------------------------------------------------------------------+
+//| ForexFactory Parser Class (ИСПРАВЛЕННАЯ)
+//+------------------------------------------------------------------+
+class CForexFactoryParser {
+private:
+    string apiUrl;
+    int timeout;
+    datetime lastProcessedTime;
+    
+public:
+    CForexFactoryParser() {
+        apiUrl = ForexFactoryURL;
+        timeout = WebRequestTimeout;
+        lastProcessedTime = 0;
+    }
+    
+    bool ParseForexFactoryNews(NewsEvent &newsArray[]) {
+        string cookie = NULL;
+        string referer = NULL;
+        char post[];
+        char result[];
+        string headers;
+        
+        string requestUrl;
+        
+        if(LoadTodayOnly) {
+            MqlDateTime dt;
+            TimeToStruct(TimeCurrent(), dt);
+            string dateStr = StringFormat("%s+%d%%2C+%d", GetMonthName(dt.mon), dt.day, dt.year);
+            requestUrl = apiUrl + "?day=" + dateStr;
+        } else {
+            requestUrl = apiUrl + "?week=this";
+        }
+        
+        Print("Запрос новостей ForexFactory: ", requestUrl);
+        
+        // Добавляем заголовки для имитации браузера
+        headers = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n";
+        headers += "Accept: text/html,application/xhtml+xml\r\n";
+        headers += "Accept-Language: en-US,en;q=0.9\r\n";
+        
+        int res = WebRequest("GET", requestUrl, headers, timeout, post, result, headers);
+        
+        if(res == -1) {
+            int error = GetLastError();
+            Print("Ошибка WebRequest. Код ошибки = ", error);
+            if(error == 4014) {
+                Print("ВАЖНО: Добавьте 'https://www.forexfactory.com' в список разрешенных URL!");
+                Print("Сервис -> Настройки -> Советники -> Разрешить WebRequest");
+            }
+            return false;
+        }
+        
+        string html = CharArrayToString(result);
+        
+        return ParseHTMLContent(html, newsArray);
+    }
+    
+    string GetMonthName(int month) {
+        string months[] = {"", "jan", "feb", "mar", "apr", "may", "jun", 
+                          "jul", "aug", "sep", "oct", "nov", "dec"};
+        if(month >= 1 && month <= 12) {
+            return months[month];
+        }
+        return "";
+    }
+    
+    int GetMonthNumber(string monthStr) {
+        string monthLower = monthStr;
+        StringToLower(monthLower);
+        
+        if(monthLower == "jan" || monthLower == "january") return 1;
+        if(monthLower == "feb" || monthLower == "february") return 2;
+        if(monthLower == "mar" || monthLower == "march") return 3;
+        if(monthLower == "apr" || monthLower == "april") return 4;
+        if(monthLower == "may") return 5;
+        if(monthLower == "jun" || monthLower == "june") return 6;
+        if(monthLower == "jul" || monthLower == "july") return 7;
+        if(monthLower == "aug" || monthLower == "august") return 8;
+        if(monthLower == "sep" || monthLower == "september") return 9;
+        if(monthLower == "oct" || monthLower == "october") return 10;
+        if(monthLower == "nov" || monthLower == "november") return 11;
+        if(monthLower == "dec" || monthLower == "december") return 12;
+        
+        return 0;
+    }
+    
+    bool ParseHTMLContent(string html, NewsEvent &newsArray[]) {
+       int newsCount = 0;
+       ArrayResize(newsArray, 0);
+       
+       // Find calendar table
+       int tableStart = StringFind(html, "calendar__table");
+       if(tableStart == -1) {
+           return false;
+       }
+       
+       // Текущая дата для новостей
+       datetime currentDate = 0;
+       lastProcessedTime = 0;  // Сброс времени последней обработки
+       
+       // Parse each row
+       int pos = tableStart;
+       while(pos < StringLen(html) && newsCount < 500) {
+           // Ищем любую строку календаря
+           int rowStart = StringFind(html, "<tr", pos);
+           if(rowStart == -1) break;
+           
+           int rowEnd = StringFind(html, "</tr>", rowStart);
+           if(rowEnd == -1) break;
+           
+           string row = StringSubstr(html, rowStart, rowEnd - rowStart);
+           
+           // Проверяем, является ли это строкой с датой
+           if(StringFind(row, "calendar__date") >= 0 && StringFind(row, "calendar__row") >= 0) {
+               // Извлекаем дату из строки
+               datetime parsedDate = ExtractDateFromRow(row);
+               if(parsedDate > 0) {
+                   currentDate = parsedDate;
+                   lastProcessedTime = 0;  // Сброс времени для новой даты
+               }
+           }
+           // Проверяем, является ли это строкой с новостью
+           else if(StringFind(row, "calendar__time") >= 0) {
+               ParseNewsRow(row, newsArray, newsCount, currentDate);
+           }
+           
+           pos = rowEnd;
+       }
+       
+       return newsCount > 0;
+   }
+   
+   void ParseNewsRow(string row, NewsEvent &newsArray[], int &count, datetime baseDate) {
+       NewsEvent baseNews;
+       
+       // Extract time - ИСПРАВЛЕНИЕ для новостей без времени
+       string time = ExtractData(row, "calendar__time", "</td>");
+       datetime newsTime = 0;
+       
+       if(time == "" || StringFind(time, "nbsp") >= 0 || StringLen(CleanHTML(time)) == 0) {
+           // Если время пустое, используем время предыдущей новости
+           if(lastProcessedTime > 0) {
+               newsTime = lastProcessedTime;
+           } else {
+               return;  // Если нет времени и нет предыдущего времени, пропускаем
+           }
+       } else {
+           // Парсим время
+           newsTime = CombineDateAndTime(baseDate, time);
+           if(newsTime > 0) {
+               lastProcessedTime = newsTime;  // Сохраняем для следующих новостей
+           }
+       }
+       
+       if(newsTime == 0) return;
+       
+       // Корректируем время с учетом GMT смещения
+       int totalOffset = brokerGMTOffset - GMTOffset;
+       newsTime = newsTime + totalOffset * 3600;
+       
+       // Extract currency - может быть множественная
+       string currencyStr = ExtractData(row, "calendar__currency", "</td>");
+       StringTrimLeft(currencyStr);
+       StringTrimRight(currencyStr);
+       
+       // Extract impact
+       baseNews.impact = 0;
+       int impactStart = StringFind(row, "calendar__impact");
+       if(impactStart >= 0) {
+           int impactEnd = StringFind(row, "</td>", impactStart);
+           if(impactEnd > impactStart) {
+               string impactSection = StringSubstr(row, impactStart, impactEnd - impactStart);
+               
+               int iconCount = 0;
+               int spanPos = 0;
+               
+               while(true) {
+                   spanPos = StringFind(impactSection, "<span", spanPos);
+                   if(spanPos == -1) break;
+                   
+                   int spanEnd = StringFind(impactSection, ">", spanPos);
+                   if(spanEnd > spanPos) {
+                       string spanTag = StringSubstr(impactSection, spanPos, spanEnd - spanPos);
+                       
+                       if(StringFind(spanTag, "icon--ff-impact-red") >= 0 || 
+                          StringFind(spanTag, "high") >= 0) {
+                           iconCount = 3;
+                           break;
+                       }
+                       else if(StringFind(spanTag, "icon--ff-impact-ora") >= 0 || 
+                               StringFind(spanTag, "icon--ff-impact-orange") >= 0 ||
+                               StringFind(spanTag, "medium") >= 0) {
+                           iconCount = 2;
+                       }
+                       else if(StringFind(spanTag, "icon--ff-impact-yel") >= 0 || 
+                               StringFind(spanTag, "icon--ff-impact-yellow") >= 0 ||
+                               StringFind(spanTag, "low") >= 0) {
+                           if(iconCount < 1) iconCount = 1;
+                       }
+                   }
+                   spanPos = spanEnd + 1;
+               }
+               
+               baseNews.impact = iconCount;
+           }
+       }
+       
+       // Extract event title
+       string title = ExtractData(row, "calendar__event", "</span>");
+       if(title == "") {
+           title = ExtractData(row, "calendar__event", "</td>");
+       }
+       baseNews.title = CleanHTML(title);
+       
+       // Extract forecast/actual values
+       string forecast = ExtractData(row, "calendar__forecast", "</td>");
+       string actual = ExtractData(row, "calendar__actual", "</td>");
+       
+       if(forecast != "" && forecast != "---") {
+           baseNews.forecast = ParseNumericValue(forecast);
+           baseNews.hasForecast = true;
+       } else {
+           baseNews.forecast = 0;
+           baseNews.hasForecast = false;
+       }
+       
+       baseNews.actual = ParseNumericValue(actual);
+       baseNews.processed = false;
+       baseNews.actualReleased = false;
+       
+       baseNews.time = newsTime;
+       
+       if(baseNews.time == 0) return;
+       
+       // Разбираем множественные валюты
+       string currencies[];
+       if(StringFind(currencyStr, ",") >= 0) {
+           StringSplit(currencyStr, ',', currencies);
+       } else {
+           ArrayResize(currencies, 1);
+           currencies[0] = currencyStr;
+       }
+       
+       // Создаем отдельную новость для каждой валюты
+       for(int i = 0; i < ArraySize(currencies); i++) {
+           NewsEvent news = baseNews;
+           
+           string currency = currencies[i];
+           StringTrimLeft(currency);
+           StringTrimRight(currency);
+           news.currency = currency;
+           
+           if(news.currency != "" && IsDateRelevant(news.time)) {
+               ArrayResize(newsArray, count + 1);
+               newsArray[count] = news;
+               count++;
+           }
+       }
+   }
