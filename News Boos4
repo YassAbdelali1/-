@@ -1,0 +1,968 @@
+datetime ExtractDateFromRow(string row) {
+       // Ищем тег с датой
+       int dateStart = StringFind(row, "calendar__date");
+       if(dateStart == -1) return 0;
+       
+       // Ищем конец тега
+       int contentStart = StringFind(row, ">", dateStart);
+       if(contentStart == -1) return 0;
+       
+       int contentEnd = StringFind(row, "</", contentStart);
+       if(contentEnd == -1) return 0;
+       
+       string dateText = StringSubstr(row, contentStart + 1, contentEnd - contentStart - 1);
+       dateText = CleanHTML(dateText);
+       
+       return ParseFullDate(dateText);
+   }
+   
+   bool IsDateRelevant(datetime newsTime) {
+       if(newsTime == 0) return false;
+       
+       datetime current = TimeCurrent();
+       
+       // Если загружаем только сегодняшние новости
+       if(LoadTodayOnly) {
+           MqlDateTime currentDt, newsDt;
+           TimeToStruct(current, currentDt);
+           TimeToStruct(newsTime, newsDt);
+           
+           // Проверяем, что новость за сегодня
+           if(currentDt.year != newsDt.year || 
+              currentDt.mon != newsDt.mon || 
+              currentDt.day != newsDt.day) {
+               // Исключение: прошедшие новости за последние NewsHistoryHours часов
+               if(newsTime >= current - (NewsHistoryHours * 3600)) {
+                   return true;
+               }
+               return false;
+           }
+       }
+       
+       // Фильтруем слишком старые новости (более недели назад)
+       if(newsTime < current - 7 * 24 * 3600) {
+           return false;
+       }
+       
+       return true;
+   }
+   
+   datetime ParseFullDate(string dateStr) {
+       // Парсим полную дату формата "Mon Nov 4" или "Today"
+       StringTrimLeft(dateStr);
+       StringTrimRight(dateStr);
+       
+       if(dateStr == "" || dateStr == "---") return 0;
+       
+       MqlDateTime dt;
+       TimeToStruct(TimeCurrent(), dt);
+       
+       // Проверяем специальные случаи
+       if(StringFind(dateStr, "Today") >= 0) {
+           // Сегодня
+           dt.hour = 0;
+           dt.min = 0;
+           dt.sec = 0;
+           return StructToTime(dt);
+       }
+       
+       if(StringFind(dateStr, "Tomorrow") >= 0) {
+           // Завтра
+           datetime tomorrow = TimeCurrent() + 86400;
+           TimeToStruct(tomorrow, dt);
+           dt.hour = 0;
+           dt.min = 0;
+           dt.sec = 0;
+           return StructToTime(dt);
+       }
+       
+       if(StringFind(dateStr, "Yesterday") >= 0) {
+           // Вчера
+           datetime yesterday = TimeCurrent() - 86400;
+           TimeToStruct(yesterday, dt);
+           dt.hour = 0;
+           dt.min = 0;
+           dt.sec = 0;
+           return StructToTime(dt);
+       }
+       
+       // Парсим обычную дату (например, "Tue Aug 19")
+       string parts[];
+       StringSplit(dateStr, ' ', parts);
+       
+       if(ArraySize(parts) >= 2) {
+           // Пропускаем день недели, если он есть
+           int monthIndex = 0;
+           int dayIndex = 1;
+           
+           // Проверяем, является ли первая часть днем недели
+           string firstPart = parts[0];
+           StringToLower(firstPart);
+           if(firstPart == "mon" || firstPart == "tue" || firstPart == "wed" || 
+              firstPart == "thu" || firstPart == "fri" || firstPart == "sat" || firstPart == "sun") {
+               monthIndex = 1;
+               dayIndex = 2;
+           }
+           
+           if(ArraySize(parts) > monthIndex) {
+               // Месяц
+               dt.mon = GetMonthNumber(parts[monthIndex]);
+               
+               // День
+               if(ArraySize(parts) > dayIndex) {
+                   dt.day = (int)StringToInteger(parts[dayIndex]);
+               }
+               
+               // Год - берем текущий год, но корректируем если нужно
+               dt.year = dt.year;
+               
+               // Проверка на переход года
+               // Если текущий месяц январь, а новость в декабре - это прошлый год
+               MqlDateTime currentDt;
+               TimeToStruct(TimeCurrent(), currentDt);
+               
+               if(currentDt.mon == 1 && dt.mon == 12) {
+                   dt.year = currentDt.year - 1;
+               }
+               // Если текущий месяц декабрь, а новость в январе - это следующий год
+               else if(currentDt.mon == 12 && dt.mon == 1) {
+                   dt.year = currentDt.year + 1;
+               }
+               // Если текущий месяц август, а новость в январе - возможно следующий год
+               else if(currentDt.mon >= 8 && dt.mon <= 2) {
+                   dt.year = currentDt.year + 1;
+               }
+               
+               // Время обнуляем
+               dt.hour = 0;
+               dt.min = 0;
+               dt.sec = 0;
+               
+               return StructToTime(dt);
+           }
+       }
+       
+       return 0;
+   }
+    
+    datetime ParseForexFactoryDate(string dateStr) {
+        return ParseFullDate(dateStr);
+    }
+    
+    datetime CombineDateAndTime(datetime date, string timeStr) {
+        if(date == 0) return 0;
+        
+        MqlDateTime dt;
+        TimeToStruct(date, dt);
+        
+        // Парсим время
+        string clean = timeStr;
+        StringTrimLeft(clean);
+        StringTrimRight(clean);
+        
+        if(clean == "" || clean == "---" || clean == "All Day") {
+            // Для событий "All Day" устанавливаем время 00:00
+            dt.hour = 0;
+            dt.min = 0;
+            dt.sec = 0;
+            return StructToTime(dt);
+        }
+        
+        // Убираем лишние пробелы и теги
+        clean = CleanHTML(clean);
+        
+        int colonPos = StringFind(clean, ":");
+        if(colonPos == -1) return date;
+        
+        int hour = (int)StringToInteger(StringSubstr(clean, 0, colonPos));
+        int minute = (int)StringToInteger(StringSubstr(clean, colonPos + 1, 2));
+        
+        // Проверяем AM/PM
+        StringToLower(clean);
+        if(StringFind(clean, "pm") >= 0 && hour != 12) hour += 12;
+        if(StringFind(clean, "am") >= 0 && hour == 12) hour = 0;
+        
+        dt.hour = hour;
+        dt.min = minute;
+        dt.sec = 0;
+        
+        return StructToTime(dt);
+    }
+    
+    string ExtractData(string source, string startMarker, string endMarker) {
+        int start = StringFind(source, startMarker);
+        if(start == -1) return "";
+        
+        start = StringFind(source, ">", start) + 1;
+        if(start == 0) return "";
+        
+        int end = StringFind(source, endMarker, start);
+        if(end == -1) return "";
+        
+        return StringSubstr(source, start, end - start);
+    }
+    
+    string CleanHTML(string html) {
+        string clean = html;
+        
+        // Удаляем HTML теги
+        while(true) {
+            int tagStart = StringFind(clean, "<");
+            if(tagStart == -1) break;
+            
+            int tagEnd = StringFind(clean, ">", tagStart);
+            if(tagEnd == -1) break;
+            
+            clean = StringSubstr(clean, 0, tagStart) + 
+                   StringSubstr(clean, tagEnd + 1);
+        }
+        
+        // Заменяем HTML entities
+        StringReplace(clean, "&nbsp;", " ");
+        StringReplace(clean, "&amp;", "&");
+        StringReplace(clean, "&lt;", "<");
+        StringReplace(clean, "&gt;", ">");
+        StringReplace(clean, "&quot;", "\"");
+        
+        // Удаляем лишние пробелы
+        while(StringFind(clean, "  ") >= 0) {
+            StringReplace(clean, "  ", " ");
+        }
+        
+        StringTrimLeft(clean);
+        StringTrimRight(clean);
+        
+        return clean;
+    }
+    
+    double ParseNumericValue(string value) {
+        string clean = value;
+        clean = CleanHTML(clean);
+        
+        // Обрабатываем специальные случаи
+        if(StringFind(clean, "<") >= 0) {
+            // Значение типа "<0.2%" -> 0.2
+            int pos = StringFind(clean, "<");
+            clean = StringSubstr(clean, pos + 1);
+        }
+        
+        string result = "";
+        bool hasDecimal = false;
+        
+        for(int i = 0; i < StringLen(clean); i++) {
+            ushort ch = StringGetCharacter(clean, i);
+            if((ch >= '0' && ch <= '9') || ch == '-') {
+                result += CharToString((uchar)ch);
+            }
+            else if(ch == '.' && !hasDecimal) {
+                result += CharToString((uchar)ch);
+                hasDecimal = true;
+            }
+        }
+        
+        if(result == "") return 0;
+        return StringToDouble(result);
+    }
+    
+    datetime ParseForexFactoryTime(string timeStr, string dateStr = "") {
+        string clean = timeStr;
+        StringTrimLeft(clean);
+        StringTrimRight(clean);
+        if(clean == "" || clean == "---") return 0;
+        
+        MqlDateTime dt;
+        TimeToStruct(TimeCurrent(), dt);
+        
+        // Если передана дата, пытаемся её распарсить
+        if(dateStr != "") {
+            datetime parsedDate = ParseForexFactoryDate(dateStr);
+            if(parsedDate > 0) {
+                TimeToStruct(parsedDate, dt);
+            }
+        }
+        
+        // Обработка "All Day" событий
+        if(StringFind(clean, "All Day") >= 0) {
+            dt.hour = 0;
+            dt.min = 0;
+            dt.sec = 0;
+            return StructToTime(dt);
+        }
+        
+        // Парсим время
+        clean = CleanHTML(clean);
+        int colonPos = StringFind(clean, ":");
+        if(colonPos == -1) return 0;
+        
+        int hour = (int)StringToInteger(StringSubstr(clean, 0, colonPos));
+        int minute = (int)StringToInteger(StringSubstr(clean, colonPos + 1, 2));
+        
+        // Проверяем AM/PM
+        StringToLower(clean);
+        if(StringFind(clean, "pm") >= 0 && hour != 12) hour += 12;
+        if(StringFind(clean, "am") >= 0 && hour == 12) hour = 0;
+        
+        dt.hour = hour;
+        dt.min = minute;
+        dt.sec = 0;
+        
+        return StructToTime(dt);
+    }
+};
+
+CForexFactoryParser ffParser;
+
+//+------------------------------------------------------------------+
+//| News Manager Class
+//+------------------------------------------------------------------+
+class CNewsManager {
+private:
+    string currencies[];
+    string newsKeywords[];
+    
+public:
+    void ParseCurrencies(string currencyList) {
+        StringSplit(currencyList, ',', currencies);
+        for(int i = 0; i < ArraySize(currencies); i++) {
+            string temp = currencies[i];
+            StringTrimLeft(temp);
+            StringTrimRight(temp);
+            currencies[i] = temp;
+        }
+    }
+    
+    void ParseKeywords(string keywordList) {
+        // ИСПРАВЛЕНИЕ: сначала заменяем экранированные слэши
+        StringReplace(keywordList, "\\/", "/");
+        
+        StringSplit(keywordList, ',', newsKeywords);
+        for(int i = 0; i < ArraySize(newsKeywords); i++) {
+            string temp = newsKeywords[i];
+            StringTrimLeft(temp);
+            StringTrimRight(temp);
+            StringToUpper(temp);
+            newsKeywords[i] = temp;
+        }
+    }
+    
+    bool LoadNewsFromForexFactory() {
+        // В режиме тестера загружаем из файлов
+        if(isTesting) {
+            return LoadNewsFromFile();
+        }
+        
+        // В реальном режиме загружаем с ForexFactory
+        NewsEvent ffNews[];
+        
+        if(ffParser.ParseForexFactoryNews(ffNews)) {
+            // Фильтруем только актуальные новости
+            NewsEvent filteredNews[];
+            datetime current = TimeCurrent();
+            int filteredCount = 0;
+            
+            for(int i = 0; i < ArraySize(ffNews); i++) {
+                // Берем только будущие новости и новости за последние NewsHistoryHours часов
+                if(ffNews[i].time >= current - (NewsHistoryHours * 3600)) {
+                    // Проверяем дополнительные фильтры
+                    if(IsNewsMatchingFilter(ffNews[i])) {
+                        ArrayResize(filteredNews, filteredCount + 1);
+                        filteredNews[filteredCount] = ffNews[i];
+                        filteredCount++;
+                    }
+                }
+            }
+            
+            // Заменяем календарь отфильтрованными новостями
+            ArrayResize(newsCalendar, ArraySize(filteredNews));
+            for(int i = 0; i < ArraySize(filteredNews); i++) {
+                newsCalendar[i] = filteredNews[i];
+            }
+            
+            SortNewsByTime();
+            lastNewsCheck = TimeCurrent();
+            
+            return true;
+        }
+        return false;
+    }
+    
+    bool LoadNewsFromFile() {
+        // Проверяем, нужно ли загрузить новый месяц
+        MqlDateTime currentDt;
+        TimeToStruct(TimeCurrent(), currentDt);
+        datetime currentMonth = StringToTime(StringFormat("%04d.%02d.01", currentDt.year, currentDt.mon));
+        
+        if(currentMonth != lastLoadedMonth) {
+            NewsEvent monthNews[];
+            
+            if(testerNewsManager.LoadNewsForMonth(TimeCurrent(), monthNews)) {
+                // Заменяем календарь новостями текущего месяца
+                ArrayResize(newsCalendar, ArraySize(monthNews));
+                for(int i = 0; i < ArraySize(monthNews); i++) {
+                    newsCalendar[i] = monthNews[i];
+                }
+                
+                SortNewsByTime();
+                lastLoadedMonth = currentMonth;
+                lastNewsCheck = TimeCurrent();
+                
+                // Применяем фильтры
+                FilterNews();
+                
+                return true;
+            }
+            return false;
+        }
+        
+        return true; // Месяц уже загружен
+    }
+    
+    void FilterNews() {
+        NewsEvent filteredNews[];
+        int filteredCount = 0;
+        
+        for(int i = 0; i < ArraySize(newsCalendar); i++) {
+            bool matchesFilter = IsNewsMatchingFilter(newsCalendar[i]);
+            bool currencyRelevant = IsCurrencyRelevant(newsCalendar[i].currency);
+            
+            if(matchesFilter && currencyRelevant) {
+                ArrayResize(filteredNews, filteredCount + 1);
+                filteredNews[filteredCount] = newsCalendar[i];
+                filteredCount++;
+            }
+        }
+        
+        // Заменяем календарь отфильтрованными новостями
+        ArrayResize(newsCalendar, ArraySize(filteredNews));
+        for(int i = 0; i < ArraySize(filteredNews); i++) {
+            newsCalendar[i] = filteredNews[i];
+        }
+    }
+    
+    void SortNewsByTime() {
+        int n = ArraySize(newsCalendar);
+        for(int i = 0; i < n-1; i++) {
+            for(int j = 0; j < n-i-1; j++) {
+                if(newsCalendar[j].time > newsCalendar[j+1].time) {
+                    NewsEvent temp = newsCalendar[j];
+                    newsCalendar[j] = newsCalendar[j+1];
+                    newsCalendar[j+1] = temp;
+                }
+            }
+        }
+    }
+    
+    NewsEvent GetNextHighImpactNews() {
+        NewsEvent nextEvent;
+        datetime current = TimeCurrent();
+        datetime nextTime = 0;
+        
+        for(int i = 0; i < ArraySize(newsCalendar); i++) {
+            if(newsCalendar[i].time > current && 
+               newsCalendar[i].impact >= MinNewsImpact &&
+               IsCurrencyRelevant(newsCalendar[i].currency) &&
+               IsNewsMatchingFilter(newsCalendar[i]) &&
+               !newsCalendar[i].processed) {
+                
+                if(nextTime == 0 || newsCalendar[i].time < nextTime) {
+                    nextTime = newsCalendar[i].time;
+                    nextEvent = newsCalendar[i];
+                }
+            }
+        }
+        return nextEvent;
+    }
+    
+    bool IsCurrencyRelevant(string currency) {
+        for(int i = 0; i < ArraySize(currencies); i++) {
+            if(currencies[i] == currency) return true;
+        }
+        return false;
+    }
+    
+    bool IsNewsMatchingFilter(NewsEvent& news) {
+        // Проверяем уровень важности
+        if(news.impact < MinNewsImpact) {
+            return false;
+        }
+        
+        // Если торгуем на всех новостях высокой важности
+        if(TradeAllHighImpact && news.impact == 3) {
+            return true;
+        }
+        
+        // Проверяем ключевые слова
+        string titleUpper = news.title;
+        StringToUpper(titleUpper);
+        
+        // Добавляем специальную проверку для Retail Sales
+        if(StringFind(titleUpper, "RETAIL") >= 0 && StringFind(titleUpper, "SALES") >= 0) {
+            return true;
+        }
+        
+        // Проверяем каждое ключевое слово
+        for(int i = 0; i < ArraySize(newsKeywords); i++) {
+            if(newsKeywords[i] == "") continue;
+            
+            string keyword = newsKeywords[i];
+            
+            // Проверяем различные варианты написания
+            if(StringFind(titleUpper, keyword) >= 0) {
+                return true;
+            }
+            
+            // Специальная проверка для m/m, y/y, q/q
+            if(keyword == "M/M" && (StringFind(titleUpper, "M/M") >= 0 || StringFind(titleUpper, "MOM") >= 0)) {
+                return true;
+            }
+            if(keyword == "Y/Y" && (StringFind(titleUpper, "Y/Y") >= 0 || StringFind(titleUpper, "YOY") >= 0)) {
+                return true;
+            }
+            if(keyword == "Q/Q" && (StringFind(titleUpper, "Q/Q") >= 0 || StringFind(titleUpper, "QOQ") >= 0)) {
+                return true;
+            }
+            
+            // Проверка для частичного совпадения (например, "Employment" найдет "Unemployment")
+            if(StringLen(keyword) >= 4 && StringFind(titleUpper, keyword) >= 0) {
+                return true;
+            }
+        }
+        
+        // Дополнительная проверка для важных индикаторов
+        string importantIndicators[] = {
+            "PRODUCTION", "MANUFACTURING", "INDUSTRIAL", "INFLATION", 
+            "UNEMPLOYMENT", "JOBLESS", "CONSUMER", "HOUSING", "TRADE"
+        };
+        
+        for(int i = 0; i < ArraySize(importantIndicators); i++) {
+            if(StringFind(titleUpper, importantIndicators[i]) >= 0) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    bool IsNewsTimeActive(datetime newsTime) {
+        datetime current = TimeCurrent();
+        int diffMinutes = (int)((current - newsTime) / 60);
+        
+        bool isActive = false;
+        
+        // Проверяем, попадает ли время в активный диапазон
+        if(diffMinutes >= -NewsMinutesBefore && diffMinutes <= NewsMinutesAfter) {
+            isActive = true;
+        }
+        
+        return isActive;
+    }
+};
+
+CNewsManager newsManager;
+
+//+------------------------------------------------------------------+
+//| Alert System
+//+------------------------------------------------------------------+
+void SendAlert(string message, bool critical = false) {
+    string fullMessage = "News Trader: " + message;
+    
+    Alert(fullMessage);
+    
+    if(critical && !isTesting) {
+        SendNotification(fullMessage);
+        SendMail("News Trader Alert", fullMessage);
+    }
+    
+    Print(fullMessage);
+}
+
+//+------------------------------------------------------------------+
+//| Expert initialization function
+//+------------------------------------------------------------------+
+int OnInit() {
+    // Определяем режим работы
+    isTesting = MQLInfoInteger(MQL_TESTER) || TesterMode;
+    
+    Print("Инициализация News Trader Pro (ForexFactory Edition)...");
+    Print("Режим работы: ", isTesting ? "ТЕСТЕР" : "РЕАЛЬНЫЙ");
+    
+    // Определяем GMT смещение брокера
+    if(AutoDetectBrokerGMT) {
+        brokerGMTOffset = GetBrokerGMTOffset();
+        
+        // Проверка разумности значения
+        if(brokerGMTOffset < -12 || brokerGMTOffset > 14) {
+            Print("Ошибка автоопределения GMT. Используется ручное значение.");
+            brokerGMTOffset = ManualBrokerGMT;
+        }
+    } else {
+        brokerGMTOffset = ManualBrokerGMT;
+    }
+    
+    Print("GMT смещение брокера: ", brokerGMTOffset);
+    Print("GMT смещение ForexFactory: ", GMTOffset);
+    Print("Общая корректировка времени: ", brokerGMTOffset - GMTOffset, " часов");
+    
+    // В режиме тестера создаем пример файла новостей
+    if(isTesting && !FileIsExist(NewsDataPath + "\\sample.csv")) {
+        Print("Создание примера файла новостей для тестирования...");
+        testerNewsManager.CreateSampleNewsFile();
+    }
+    
+    // Устанавливаем глобальный указатель для панели
+    newsManagerPtr = GetPointer(newsManager);
+    
+    // Устанавливаем магический номер для объекта trade
+    trade.SetExpertMagicNumber(MagicNumber);
+    trade.SetDeviationInPoints(MaxSlippagePoints);
+    
+    riskManager.SetRiskLevel(RiskLevel);
+    newsManager.ParseCurrencies(NewsCurrencies);
+    newsManager.ParseKeywords(NewsFilterKeywords);
+    
+    StringSplit(TradingPairs, ',', validPairs);
+    for(int i = 0; i < ArraySize(validPairs); i++) {
+        string temp = validPairs[i];
+        StringTrimLeft(temp);
+        StringTrimRight(temp);
+        validPairs[i] = temp;
+    }
+    
+    atrHandle = iATR(_Symbol, PERIOD_M15, ATRPeriod);
+    if(atrHandle == INVALID_HANDLE) {
+        Print("Ошибка создания индикатора ATR");
+        return INIT_FAILED;
+    }
+    
+    if(UseNewsFilter) {
+        if(!newsManager.LoadNewsFromForexFactory()) {
+            if(isTesting) {
+                Print("Предупреждение: Не удалось загрузить новости для тестирования");
+                Print("Убедитесь, что файлы новостей находятся в папке: ", NewsDataPath);
+            } else {
+                Print("Предупреждение: Не удалось загрузить календарь ForexFactory");
+                Print("Проверьте настройки WebRequest!");
+            }
+        }
+    }
+    
+    // Initialize news panel
+    if(ShowNewsPanel && !isTesting) {
+        newsPanel.SetPosition(PanelX, PanelY);
+        newsPanel.SetColors(PanelBackgroundColor, PanelTextColor);
+        newsPanel.SetWidth(PanelWidth);
+        newsPanel.SetFontSize(PanelFontSize);
+        newsPanel.Create();
+        newsPanel.Update(newsCalendar, ArraySize(newsCalendar), lastNewsCheck, NewsMinutesBefore);
+    }
+    
+    EventSetTimer(NewsUpdateMinutes * 60);
+    
+    Comment("News Trader Pro (FF) активен\n" +
+            "Режим: " + (isTesting ? "ТЕСТЕР" : "РЕАЛЬНЫЙ") + "\n" +
+            "Стратегия: " + EnumToString(TradingStrategy) + "\n" +
+            "Источник: " + (isTesting ? "Файлы" : "ForexFactory") + "\n" +
+            "GMT брокера: " + IntegerToString(brokerGMTOffset) + "\n" +
+            "Фильтр новостей: " + (TradeAllHighImpact ? "Все HIGH + " : "") + NewsFilterKeywords + "\n" +
+            "Лимиты: " + (LimitOrdersPerNews ? "По новостям (" + IntegerToString(MaxOrdersPerNews) + ")" : "Общие"));
+    
+    SendAlert("EA запущен. Режим: " + (isTesting ? "ТЕСТЕР" : "РЕАЛЬНЫЙ"));
+    
+    return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function  
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason) {
+    EventKillTimer();
+    IndicatorRelease(atrHandle);
+    
+    // Delete news panel
+    if(ShowNewsPanel) {
+        newsPanel.Delete();
+    }
+    
+    Comment("");
+    Print("News Trader Pro деактивирован");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function
+//+------------------------------------------------------------------+
+void OnTick() {
+    // Обновляем ATR для текущего символа
+    double atrBuffer[];
+    if(CopyBuffer(atrHandle, 0, 0, 1, atrBuffer) > 0) {
+        currentATR = atrBuffer[0];
+    }
+    
+    // В режиме тестера обновляем фактические значения новостей
+    if(isTesting) {
+        testerNewsManager.UpdateActualsForCurrentTime(newsCalendar);
+    }
+    
+    if(!riskManager.CheckDailyLoss() || !riskManager.CheckConsecutiveLosses()) {
+        return;
+    }
+    
+    // Проверяем парные ордера стрэддла на срабатывание
+    if(CancelOppositeOrdersOnFill && TradingStrategy == STRATEGY_STRADDLE) {
+        CheckAndCancelOppositeOrders();
+    }
+    
+    // Проверяем истечение срока ордеров
+    if(UseOrderExpiration) {
+        CheckOrderExpiration();
+    }
+    
+    // Очищаем информацию о ценовых уровнях
+    CleanupSymbolOrders();
+    
+    // Очищаем неактивные пуллбэк сетапы
+    if(TradingStrategy == STRATEGY_PULLBACK) {
+        strategy.CleanupInactiveSetups();
+    }
+    
+    // Обновляем SL/TP по ATR
+    UpdatePositionsByATR();
+    
+    // Обновляем трейлинг стоп
+    UpdateTrailingStop();
+    
+    if(!UseNewsFilter || ArraySize(newsCalendar) == 0) return;
+    
+    datetime current = TimeCurrent();
+    
+    // Обрабатываем все новости
+    for(int i = 0; i < ArraySize(newsCalendar); i++) {
+        // Проверяем активность времени новости
+        bool isTimeActive = newsManager.IsNewsTimeActive(newsCalendar[i].time);
+        
+        // Для фундаментальной стратегии проверяем также выход фактических данных
+        if(TradingStrategy == STRATEGY_FUNDAMENTAL && !newsCalendar[i].processed) {
+            if(newsCalendar[i].actualReleased && newsCalendar[i].actual != 0) {
+                int minutesSinceRelease = (int)((current - newsCalendar[i].time) / 60);
+                if(minutesSinceRelease >= 0 && minutesSinceRelease <= NewsMinutesAfter) {
+                    isTimeActive = true;
+                }
+            }
+        }
+        
+        if(!newsCalendar[i].processed && isTimeActive) {
+            if(newsManager.IsNewsMatchingFilter(newsCalendar[i]) && 
+               newsManager.IsCurrencyRelevant(newsCalendar[i].currency)) {
+                
+                // Проверяем, есть ли торговые пары для этой валюты
+                string tradePairs[];
+                GetTradingPairsForCurrency(newsCalendar[i].currency, tradePairs);
+                
+                if(ArraySize(tradePairs) > 0) {
+                    for(int j = 0; j < ArraySize(tradePairs); j++) {
+                        string symbol = tradePairs[j];
+                        
+                        // Обязательно выбираем символ и обновляем его данные
+                        if(!SymbolSelect(symbol, true)) {
+                            continue;
+                        }
+                        
+                        // Обновляем рыночные данные для символа
+                        MqlTick tick;
+                        SymbolInfoTick(symbol, tick);
+                        
+                        // Получаем локальный ATR для символа
+                        int localATRHandle = iATR(symbol, PERIOD_M15, ATRPeriod);
+                        double localATRBuffer[];
+                        double symbolATR = currentATR;
+                        
+                        if(CopyBuffer(localATRHandle, 0, 0, 1, localATRBuffer) > 0) {
+                            symbolATR = localATRBuffer[0];
+                            currentATR = symbolATR;
+                        }
+                        IndicatorRelease(localATRHandle);
+                        
+                        // Проверяем спред
+                        double spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD) * SymbolInfoDouble(symbol, SYMBOL_POINT);
+                        double maxSpread = MaxSpreadPoints * SymbolInfoDouble(symbol, SYMBOL_POINT);
+                        
+                        if(spread > maxSpread) {
+                            continue;
+                        }
+                        
+                        switch(TradingStrategy) {
+                            case STRATEGY_STRADDLE:
+                                strategy.ExecuteStraddleStrategy(symbol, newsCalendar[i]);
+                                break;
+                            case STRATEGY_BREAKOUT:
+                                strategy.ExecuteBreakoutStrategy(symbol, newsCalendar[i]);
+                                break;
+                            case STRATEGY_PULLBACK:
+                                strategy.ExecutePullbackStrategy(symbol, newsCalendar[i]);
+                                break;
+                            case STRATEGY_FUNDAMENTAL:
+                                strategy.ExecuteFundamentalStrategy(symbol, newsCalendar[i]);
+                                break;
+                        }
+                    }
+                    
+                    newsCalendar[i].processed = true;
+                    
+                    SendAlert(StringFormat("Новость обработана: %s %s", 
+                                         newsCalendar[i].currency, 
+                                         newsCalendar[i].title));
+                }
+            }
+        }
+        
+        // Отправляем звуковой сигнал о приближающейся новости
+        if(EnableSoundAlert && !newsCalendar[i].processed) {
+            int minutesToNews = (int)((newsCalendar[i].time - current) / 60);
+            if(minutesToNews == SoundAlertMinutes && 
+               newsManager.IsNewsMatchingFilter(newsCalendar[i]) &&
+               newsManager.IsCurrencyRelevant(newsCalendar[i].currency)) {
+                
+                if(!isTesting) PlaySound("alert.wav");
+                SendAlert(StringFormat("Через %d минут: %s %s (Важность: %d)", 
+                                    minutesToNews,
+                                    newsCalendar[i].currency,
+                                    newsCalendar[i].title,
+                                    newsCalendar[i].impact));
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Timer event
+//+------------------------------------------------------------------+
+void OnTimer() {
+    // Регулярное обновление новостей
+    if(UseNewsFilter && TimeCurrent() - lastNewsCheck >= NewsUpdateMinutes * 60) {
+        Print("Обновление календаря новостей...");
+        
+        if(newsManager.LoadNewsFromForexFactory()) {
+            lastNewsCheck = TimeCurrent();
+            SendAlert("Календарь новостей обновлен");
+            
+            // Update panel
+            if(ShowNewsPanel && !isTesting) {
+                newsPanel.Update(newsCalendar, ArraySize(newsCalendar), lastNewsCheck, NewsMinutesBefore);
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Chart event
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id,
+                  const long &lparam,
+                  const double &dparam,
+                  const string &sparam) {
+    
+    if(id == CHARTEVENT_OBJECT_CLICK) {
+        if(newsPanel.IsRefreshClicked(sparam)) {
+            Print("Ручное обновление календаря новостей...");
+            if(newsManager.LoadNewsFromForexFactory()) {
+                lastNewsCheck = TimeCurrent();
+                SendAlert("Календарь новостей обновлен вручную");
+                newsPanel.Update(newsCalendar, ArraySize(newsCalendar), lastNewsCheck, NewsMinutesBefore);
+            }
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| OnTester - Custom optimization criterion
+//+------------------------------------------------------------------+
+double OnTester()
+{
+    // Get basic statistics
+    double profit = TesterStatistics(STAT_PROFIT);                     // Total profit
+    double profitable_trades = TesterStatistics(STAT_PROFIT_TRADES);   // Profitable trades
+    double loss_trades = TesterStatistics(STAT_LOSS_TRADES);          // Loss trades
+    double drawdown = TesterStatistics(STAT_BALANCE_DDREL_PERCENT);   // Maximum drawdown
+    double sumtrades = TesterStatistics(STAT_TRADES);                 // Total trades
+    double depozit = TesterStatistics(STAT_INITIAL_DEPOSIT);
+    
+    double totalsum = profit + depozit;
+    
+    // Initialize and calculate win rate
+    double winrate = 0.0;
+    if(sumtrades == 0)
+        winrate = 0.0;
+    else
+        winrate = profitable_trades / sumtrades;
+    
+    // Set minimum drawdown to 1%
+    if(drawdown < 1.1)
+        drawdown = 1.0;
+    
+    // Calculate win/loss ratio
+    double win_loss_ratio;
+    if(loss_trades == 0)
+        win_loss_ratio = profitable_trades;
+    else    
+        win_loss_ratio = profitable_trades / loss_trades;
+    
+    // Calculate TP/SL ratio based on multipliers
+    double tp_sl_ratio = TakeProfitMultiplier / StopLossMultiplier;
+    
+    // Calculate initial criterion
+    double criterion = 0;
+    
+    if(drawdown != 0)
+        criterion = profit * winrate * profitable_trades / drawdown;
+    else
+        criterion = profit * winrate * profitable_trades;
+    
+    // Apply TP/SL penalty if ratio is outside acceptable range
+    if(tp_sl_ratio < 1.0 || tp_sl_ratio > 5.0)
+    {
+        criterion /= 150.0;
+    }
+    
+    // Apply win rate penalty if below threshold
+    if(winrate < 0.5)
+    {
+        criterion /= 150.0;
+    }
+    
+    // Check profit factor
+    if(totalsum > 0 && depozit > 0)
+    {
+        double profitFactor = totalsum / depozit;
+        if(profitFactor < 1.02 || profitFactor > 1.30)
+        {
+            criterion /= 150.0;
+        }
+    }
+    
+    // Apply trailing stop penalty
+    if(UseTrailingStop && TrailingStopMultiplier < 0.6)
+    {
+        criterion /= 150.0;
+    }
+    
+    // Apply minimum trades requirement
+    double minimum_required_trades = 23.0;
+    
+    if(sumtrades < minimum_required_trades)
+        criterion /= (minimum_required_trades - sumtrades);
+    
+    // Add debug logging
+    if(MQLInfoInteger(MQL_DEBUG))
+    {
+        Print("=== OnTester Calculation Details ===");
+        Print("Profit: ", profit);
+        Print("Win Rate: ", winrate);
+        Print("Win/Loss Ratio: ", win_loss_ratio);
+        Print("TP/SL Ratio: ", tp_sl_ratio);
+        Print("Drawdown: ", drawdown);
+        Print("Total Trades: ", sumtrades);
+        Print("Minimum Required Trades: ", minimum_required_trades);
+        Print("Final Criterion: ", criterion);
+    }
+    
+    return criterion;
+}
