@@ -1,0 +1,976 @@
+// Функция определения GMT смещения брокера
+int GetBrokerGMTOffset() {
+    // Метод 1: По последней свече
+    datetime brokerTime = TimeCurrent();
+    datetime barTime = iTime(_Symbol, PERIOD_H1, 0);
+    
+    // Получаем время открытия текущего бара в GMT
+    MqlDateTime brokerDt;
+    TimeToStruct(barTime, brokerDt);
+    
+    // Метод 2: Сравнение с известным временем рынка
+    // Форекс рынок открывается в воскресенье 22:00 GMT
+    // Найдем последнее воскресенье
+    datetime currentTime = TimeCurrent();
+    MqlDateTime dt;
+    TimeToStruct(currentTime, dt);
+    
+    // Идем назад до воскресенья
+    int daysBack = 0;
+    while(dt.day_of_week != 0) { // 0 = воскресенье
+        currentTime -= 86400; // Вычитаем день
+        TimeToStruct(currentTime, dt);
+        daysBack++;
+        if(daysBack > 7) break; // Защита от бесконечного цикла
+    }
+    
+    // Теперь найдем первый бар после открытия рынка в это воскресенье
+    datetime sundayOpen = StringToTime(TimeToString(currentTime, TIME_DATE) + " 00:00");
+    int shift = iBarShift(_Symbol, PERIOD_H1, sundayOpen);
+    
+    // Ищем первый бар после открытия
+    for(int i = shift; i >= 0; i--) {
+        datetime ibarTime = iTime(_Symbol, PERIOD_H1, i);
+        if(ibarTime >= sundayOpen) {
+            MqlDateTime barDt;
+            TimeToStruct(ibarTime, barDt);
+            
+            // Если первый бар воскресенья открылся в 22:00 или позже
+            if(barDt.day_of_week == 0 && barDt.hour >= 22) {
+                // Рынок открывается в 22:00 GMT в воскресенье
+                // Смещение = час открытия - 22
+                int offset = barDt.hour - 22;
+                if(offset < 0) offset += 24;
+                
+                Print("Первый бар воскресенья: " + TimeToString(ibarTime));
+                Print("Час открытия: " + IntegerToString(barDt.hour));
+                Print("Вычисленное GMT смещение: " + IntegerToString(offset));
+                
+                return offset;
+            }
+        }
+    }
+    
+    // Метод 3: Если не удалось определить автоматически,
+    // используем значение по умолчанию для популярных брокеров
+    Print("Не удалось автоматически определить GMT смещение");
+    Print("Используется значение по умолчанию: GMT+3");
+    
+    return 3; // Большинство брокеров используют GMT+2 или GMT+3
+}
+
+//+------------------------------------------------------------------+
+//| Risk Manager Class
+//+------------------------------------------------------------------+
+class CRiskManager {
+private:
+    double maxRiskPercent;
+    double accountBalance;
+    double currentDrawdown;
+    
+public:
+    void SetRiskLevel(ENUM_RISK_LEVEL level) {
+        switch(level) {
+            case RISK_LOW: maxRiskPercent = 0.5; break;
+            case RISK_MEDIUM: maxRiskPercent = 1.0; break;
+            case RISK_HIGH: maxRiskPercent = 2.0; break;
+        }
+    }
+    
+    double CalculatePositionSize(string symbol, double stopLossPips) {
+        accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+        double riskAmount = accountBalance * (maxRiskPercent / 100.0);
+        
+        // Получаем все необходимые параметры символа
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+        double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+        double contractSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+        int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+        
+        // ВАЖНО: Корректируем понимание "пипсов" для разных инструментов
+        double pipValue;
+        
+        // Определяем размер пипса в зависимости от типа инструмента
+        if(digits == 5 || digits == 3) {
+            // Форекс с 5 или 3 знаками - пипс = 10 * point
+            pipValue = point * 10;
+        } else if(digits == 2 || digits == 4) {
+            // Форекс с 2 или 4 знаками, CFD - пипс = point
+            pipValue = point;
+        } else {
+            // Остальные инструменты - пипс = point
+            pipValue = point;
+        }
+        
+        // Правильный расчет размера позиции
+        double lots = 0;
+        
+        if(tickValue > 0 && tickSize > 0) {
+            // Конвертируем стоп-лосс из пипсов в изменение цены
+            double priceChange = stopLossPips * pipValue;
+            
+            // Конвертируем изменение цены в количество тиков
+            double ticksCount = priceChange / tickSize;
+            
+            // Рассчитываем убыток на 1 лот
+            double lossPerLot = ticksCount * tickValue;
+            
+            // Рассчитываем размер позиции
+            if(lossPerLot > 0) {
+                lots = riskAmount / lossPerLot;
+            }
+        }
+        
+        if(lots <= 0) {
+            return SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        }
+        
+        // Получаем ограничения по лоту
+        double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+        double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        
+        // Нормализация по шагу лота
+        lots = MathFloor(lots / lotStep) * lotStep;
+        
+        // Применяем ограничения
+        lots = MathMax(minLot, MathMin(maxLot, lots));
+        
+        // Проверка маржи
+        double margin = 0;
+        if(OrderCalcMargin(ORDER_TYPE_BUY, symbol, lots, SymbolInfoDouble(symbol, SYMBOL_ASK), margin)) {
+            double freeMargin = AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+            if(margin > freeMargin * 0.95) {
+                double newLots = freeMargin * 0.95 / margin * lots;
+                newLots = MathFloor(newLots / lotStep) * lotStep;
+                newLots = MathMax(minLot, newLots);
+                
+                lots = newLots;
+            }
+        }
+        
+        // Финальная проверка
+        if(lots < minLot) lots = minLot;
+        if(lots > maxLot) lots = maxLot;
+        
+        return lots;
+    }
+    
+    bool CheckDailyLoss() {
+        double accountEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+        double dailyStart = AccountInfoDouble(ACCOUNT_BALANCE);
+        dailyPnL = accountEquity - dailyStart;
+        
+        if(MathAbs(dailyPnL / dailyStart * 100) >= MaxDailyLoss) {
+            tradingHalted = true;
+            Comment("Торговля остановлена: достигнут дневной лимит потерь");
+            return false;
+        }
+        return true;
+    }
+    
+    bool CheckConsecutiveLosses() {
+        if(consecutiveLosses >= ConsecutiveLossLimit) {
+            tradingHalted = true;
+            Comment("Торговля остановлена: превышен лимит последовательных убытков");
+            return false;
+        }
+        return true;
+    }
+};
+
+CRiskManager riskManager;
+
+//+------------------------------------------------------------------+
+//| Trading Strategy Class
+//+------------------------------------------------------------------+
+class CTradingStrategy {
+private:
+    int pendingBuyTicket;
+    int pendingSellTicket;
+    
+    // Структура для пуллбэк сетапов
+    struct PullbackSetup {
+        datetime setupTime;
+        string symbol;
+        double breakoutLevel;
+        double entryZoneHigh;
+        double entryZoneLow;
+        bool isLongSetup;
+        datetime expiryTime;
+        bool isActive;
+        
+        PullbackSetup(const PullbackSetup& other) {
+            setupTime = other.setupTime;
+            symbol = other.symbol;
+            breakoutLevel = other.breakoutLevel;
+            entryZoneHigh = other.entryZoneHigh;
+            entryZoneLow = other.entryZoneLow;
+            isLongSetup = other.isLongSetup;
+            expiryTime = other.expiryTime;
+            isActive = other.isActive;
+        }
+        
+        PullbackSetup() {
+            setupTime = 0;
+            symbol = "";
+            breakoutLevel = 0;
+            entryZoneHigh = 0;
+            entryZoneLow = 0;
+            isLongSetup = false;
+            expiryTime = 0;
+            isActive = false;
+        }
+    };
+    
+    PullbackSetup pullbackSetups[];
+    
+public:
+    CTradingStrategy() {
+        pendingBuyTicket = 0;
+        pendingSellTicket = 0;
+    }
+    
+    void ExecuteStraddleStrategy(string symbol, NewsEvent& news) {
+        // Обновляем существующие ордера если нужно
+        UpdateExistingOrders(symbol, news);
+        
+        // ИСПРАВЛЕНИЕ: Получаем актуальные цены
+        MqlTick tick;
+        if(!SymbolInfoTick(symbol, tick)) {
+            return;
+        }
+        
+        double currentPrice = tick.ask;
+        double bid = tick.bid;
+        
+        // Получаем локальный ATR для символа
+        int localATRHandle = iATR(symbol, PERIOD_M15, ATRPeriod);
+        double localATRBuffer[];
+        double localATR = currentATR;
+        
+        if(CopyBuffer(localATRHandle, 0, 0, 1, localATRBuffer) > 0) {
+            localATR = localATRBuffer[0];
+        }
+        IndicatorRelease(localATRHandle);
+        
+        double distance = localATR * ATRMultiplier;
+        
+        // Для новостей без прогноза увеличиваем расстояние
+        if(!news.hasForecast) {
+            distance *= 1.5;
+        }
+        
+        double spread = (currentPrice - bid);
+        double maxSpread = MaxSpreadPoints * SymbolInfoDouble(symbol, SYMBOL_POINT);
+        
+        if(spread > maxSpread) {
+            return;
+        }
+        
+        // Определяем размер пипса для корректного расчета
+        int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+        double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        double pipSize = (digits == 5 || digits == 3) ? point * 10 : point;
+        
+        // Конвертируем дистанцию в пипсы для расчета позиции
+        double distanceInPips = distance / pipSize;
+        
+        // ИСПРАВЛЕНИЕ: Правильный расчет SL и TP
+        double slDistanceInPips = distanceInPips * StopLossMultiplier;
+        double tpDistanceInPips = distanceInPips * TakeProfitMultiplier;
+        
+        double lotSize = riskManager.CalculatePositionSize(symbol, slDistanceInPips);
+        
+        // Для Buy Stop используем Ask, для Sell Stop - Bid
+        double buyPrice = currentPrice + distance;
+        double buySL = buyPrice - (slDistanceInPips * pipSize);
+        double buyTP = buyPrice + (tpDistanceInPips * pipSize);
+        
+        double sellPrice = bid - distance;
+        double sellSL = sellPrice + (slDistanceInPips * pipSize);
+        double sellTP = sellPrice - (tpDistanceInPips * pipSize);
+        
+        // Нормализуем цены
+        buyPrice = NormalizeDouble(buyPrice, digits);
+        buySL = NormalizeDouble(buySL, digits);
+        buyTP = NormalizeDouble(buyTP, digits);
+        sellPrice = NormalizeDouble(sellPrice, digits);
+        sellSL = NormalizeDouble(sellSL, digits);
+        sellTP = NormalizeDouble(sellTP, digits);
+        
+        // Проверяем возможность выставления ордеров
+        bool canPlaceBuy = CanPlaceOrder(symbol, buyPrice, news.time, news.title);
+        bool canPlaceSell = CanPlaceOrder(symbol, sellPrice, news.time, news.title);
+        
+        if(!canPlaceBuy && !canPlaceSell) {
+            return;
+        }
+        
+        // Рассчитываем время истечения ордера
+        datetime expiration = 0;
+        if(UseOrderExpiration) {
+            expiration = news.time + NewsMinutesAfter * 60;
+        }
+        
+        ulong buyTicket = 0;
+        ulong sellTicket = 0;
+        
+        // ИСПРАВЛЕНИЕ: Размещаем ордера с дополнительными проверками
+        if(canPlaceBuy) {
+            // Проверяем минимальное расстояние от текущей цены
+            if(buyPrice - currentPrice < SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * point) {
+                // Корректируем цену
+                buyPrice = currentPrice + SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+                buySL = buyPrice - (slDistanceInPips * pipSize);
+                buyTP = buyPrice + (tpDistanceInPips * pipSize);
+            }
+            
+            buyTicket = PlacePendingOrder(ORDER_TYPE_BUY_STOP, symbol, buyPrice, buySL, buyTP, lotSize, expiration);
+            
+            if(buyTicket > 0) {
+                RegisterOrderPlaced(symbol, buyPrice, news.time, news.title);
+                RegisterOrderForNews(buyTicket, news.time, news.title, news.currency);
+            }
+        }
+        
+        if(canPlaceSell) {
+            // Проверяем минимальное расстояние от текущей цены  
+            if(bid - sellPrice < SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * point) {
+                sellPrice = bid - SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL) * point;
+                sellSL = sellPrice + (slDistanceInPips * pipSize);
+                sellTP = sellPrice - (tpDistanceInPips * pipSize);
+            }
+            
+            sellTicket = PlacePendingOrder(ORDER_TYPE_SELL_STOP, symbol, sellPrice, sellSL, sellTP, lotSize, expiration);
+            
+            if(sellTicket > 0) {
+                RegisterOrderPlaced(symbol, sellPrice, news.time, news.title);
+                RegisterOrderForNews(sellTicket, news.time, news.title, news.currency);
+            }
+        }
+        
+        // Регистрируем пару стрэддл ордеров
+        if(buyTicket > 0 && sellTicket > 0 && CancelOppositeOrdersOnFill) {
+            RegisterStraddlePair(buyTicket, sellTicket, symbol, news.time);
+        }
+    }
+    
+    void ExecuteBreakoutStrategy(string symbol, NewsEvent& news) {
+        // Обновляем существующие ордера если нужно
+        UpdateExistingOrders(symbol, news);
+        
+        // ИСПРАВЛЕНИЕ: Проверяем волатильность на нескольких таймфреймах
+        double highM5 = iHigh(symbol, PERIOD_M5, 1);
+        double lowM5 = iLow(symbol, PERIOD_M5, 1);
+        double highM1 = iHigh(symbol, PERIOD_M1, 0);
+        double lowM1 = iLow(symbol, PERIOD_M1, 0);
+        
+        double currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+        
+        // Анализ объема
+        long currentVolume = iVolume(symbol, PERIOD_M1, 0);
+        long avgVolume = 0;
+        for(int i = 1; i <= 10; i++) {
+            avgVolume += iVolume(symbol, PERIOD_M1, i);
+        }
+        avgVolume /= 10;
+        
+        // Условия пробоя
+        bool volumeConfirmed = currentVolume > avgVolume * 1.5;
+        double breakoutThreshold = currentATR * 0.3; // Снижен порог для большей чувствительности
+        
+        bool bullishBreakout = (currentPrice > highM5 + breakoutThreshold) || 
+                               (currentPrice > highM1 + breakoutThreshold && volumeConfirmed);
+        bool bearishBreakout = (bid < lowM5 - breakoutThreshold) || 
+                               (bid < lowM1 - breakoutThreshold && volumeConfirmed);
+        
+        if((bullishBreakout || bearishBreakout) && volumeConfirmed) {
+            // Корректный расчет размера позиции
+            int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double pipSize = (digits == 5 || digits == 3) ? point * 10 : point;
+            
+            double distanceInPips = currentATR * 0.75 / pipSize;
+            double slDistanceInPips = distanceInPips * StopLossMultiplier;
+            double tpDistanceInPips = distanceInPips * TakeProfitMultiplier;
+            
+            double lotSize = riskManager.CalculatePositionSize(symbol, slDistanceInPips);
+            
+            if(bullishBreakout) {
+                if(CanPlaceOrder(symbol, currentPrice, news.time, news.title)) {
+                    double sl = currentPrice - (slDistanceInPips * pipSize);
+                    double tp = currentPrice + (tpDistanceInPips * pipSize);
+                    
+                    // Используем рыночный ордер для немедленного входа
+                    if(trade.Buy(lotSize, symbol, 0, sl, tp, "Breakout Buy")) {
+                        RegisterOrderPlaced(symbol, currentPrice, news.time, news.title);
+                        
+                        // Получаем ticket последней позиции
+                        ulong ticket = 0;
+                        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                            if(PositionSelectByTicket(PositionGetTicket(i))) {
+                                if(PositionGetString(POSITION_SYMBOL) == symbol &&
+                                   PositionGetInteger(POSITION_MAGIC) == MagicNumber) {
+                                    ticket = PositionGetTicket(i);
+                                    RegisterPosition(ticket, symbol, currentPrice, sl);
+                                    break;
+                                }
+                            }
+                        }
+                        if(ticket > 0) {
+                            RegisterOrderForNews(ticket, news.time, news.title, news.currency);
+                        }
+                    }
+                }
+            } else if(bearishBreakout) {
+                if(CanPlaceOrder(symbol, bid, news.time, news.title)) {
+                    double sl = bid + (slDistanceInPips * pipSize);
+                    double tp = bid - (tpDistanceInPips * pipSize);
+                    
+                    if(trade.Sell(lotSize, symbol, 0, sl, tp, "Breakout Sell")) {
+                        RegisterOrderPlaced(symbol, bid, news.time, news.title);
+                        
+                        // Получаем ticket последней позиции
+                        ulong ticket = 0;
+                        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                            if(PositionSelectByTicket(PositionGetTicket(i))) {
+                                if(PositionGetString(POSITION_SYMBOL) == symbol &&
+                                   PositionGetInteger(POSITION_MAGIC) == MagicNumber) {
+                                    ticket = PositionGetTicket(i);
+                                    RegisterPosition(ticket, symbol, bid, sl);
+                                    break;
+                                }
+                            }
+                        }
+                        if(ticket > 0) {
+                            RegisterOrderForNews(ticket, news.time, news.title, news.currency);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Если пробоя нет, размещаем отложенные ордера
+            double distance = currentATR * 0.5; // Меньшее расстояние для отложенных ордеров
+            
+            // Корректный расчет размера позиции
+            int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double pipSize = (digits == 5 || digits == 3) ? point * 10 : point;
+            
+            double distanceInPips = distance / pipSize;
+            double slDistanceInPips = distanceInPips * StopLossMultiplier;
+            double tpDistanceInPips = distanceInPips * TakeProfitMultiplier;
+            
+            double lotSize = riskManager.CalculatePositionSize(symbol, slDistanceInPips);
+            
+            // Buy Stop выше текущего максимума
+            double buyPrice = highM5 + distance;
+            double buySL = buyPrice - (slDistanceInPips * pipSize);
+            double buyTP = buyPrice + (tpDistanceInPips * pipSize);
+            
+            // Sell Stop ниже текущего минимума  
+            double sellPrice = lowM5 - distance;
+            double sellSL = sellPrice + (slDistanceInPips * pipSize);
+            double sellTP = sellPrice - (tpDistanceInPips * pipSize);
+            
+            datetime expiration = UseOrderExpiration ? news.time + NewsMinutesAfter * 60 : 0;
+            
+            if(CanPlaceOrder(symbol, buyPrice, news.time, news.title)) {
+                ulong buyTicket = PlacePendingOrder(ORDER_TYPE_BUY_STOP, symbol, buyPrice, buySL, buyTP, lotSize, expiration);
+                if(buyTicket > 0) {
+                    RegisterOrderPlaced(symbol, buyPrice, news.time, news.title);
+                    RegisterOrderForNews(buyTicket, news.time, news.title, news.currency);
+                }
+            }
+            
+            if(CanPlaceOrder(symbol, sellPrice, news.time, news.title)) {
+                ulong sellTicket = PlacePendingOrder(ORDER_TYPE_SELL_STOP, symbol, sellPrice, sellSL, sellTP, lotSize, expiration);
+                if(sellTicket > 0) {
+                    RegisterOrderPlaced(symbol, sellPrice, news.time, news.title);
+                    RegisterOrderForNews(sellTicket, news.time, news.title, news.currency);
+                }
+            }
+        }
+    }
+    
+    void ExecutePullbackStrategy(string symbol, NewsEvent& news) {
+        // Обновляем существующие ордера если нужно
+        UpdateExistingOrders(symbol, news);
+        
+        // Получаем уровни поддержки/сопротивления
+        double highM15 = iHigh(symbol, PERIOD_M15, iHighest(symbol, PERIOD_M15, MODE_HIGH, 20, 1));
+        double lowM15 = iLow(symbol, PERIOD_M15, iLowest(symbol, PERIOD_M15, MODE_LOW, 20, 1));
+        
+        double currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        double bid = SymbolInfoDouble(symbol, SYMBOL_BID);
+        
+        // Проверяем, есть ли уже активный сетап для этого символа
+        int setupIndex = FindActiveSetup(symbol);
+        
+        if(setupIndex >= 0) {
+            // Проверяем условия для входа
+            if(CheckPullbackEntry(setupIndex)) {
+                EnterPullbackTrade(setupIndex, news);
+            } else if(ShouldCancelPullbackSetup(setupIndex)) {
+                CancelPullbackSetup(setupIndex);
+            }
+        } else {
+            // Определяем ключевой уровень
+            double keyLevel = (MathAbs(currentPrice - highM15) < MathAbs(currentPrice - lowM15)) ? highM15 : lowM15;
+            
+            // ИСПРАВЛЕНИЕ: Упрощенная логика определения пробоя
+            double breakoutDistance = currentATR * 0.5;
+            bool breakoutDetected = false;
+            bool isBullish = false;
+            
+            if(currentPrice > highM15 + breakoutDistance) {
+                breakoutDetected = true;
+                isBullish = true;
+                keyLevel = highM15;
+            } else if(bid < lowM15 - breakoutDistance) {
+                breakoutDetected = true;
+                isBullish = false;
+                keyLevel = lowM15;
+            }
+            
+            // Если пробой обнаружен, создаем сетап для пуллбэка
+            if(breakoutDetected) {
+                CreatePullbackSetup(symbol, keyLevel, news);
+            } else {
+                // Если пробоя нет, размещаем отложенные ордера на уровнях
+                int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+                double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+                double pipSize = (digits == 5 || digits == 3) ? point * 10 : point;
+                
+                double distance = currentATR * 0.3;
+                double distanceInPips = distance / pipSize;
+                double slDistanceInPips = distanceInPips * StopLossMultiplier * 0.7; // Меньший стоп для пуллбэка
+                double tpDistanceInPips = distanceInPips * TakeProfitMultiplier * 1.5; // Больший тейк для пуллбэка
+                
+                double lotSize = riskManager.CalculatePositionSize(symbol, slDistanceInPips);
+                
+                // Ордер на отскок от верхнего уровня (sell limit)
+                if(currentPrice < highM15 - distance) {
+                    double sellPrice = highM15 - distance * 0.236; // Уровень Фибоначчи
+                    double sellSL = sellPrice + (slDistanceInPips * pipSize);
+                    double sellTP = sellPrice - (tpDistanceInPips * pipSize);
+                    
+                    if(CanPlaceOrder(symbol, sellPrice, news.time, news.title)) {
+                        datetime expiration = UseOrderExpiration ? news.time + NewsMinutesAfter * 60 : 0;
+                        ulong sellTicket = PlacePendingOrder(ORDER_TYPE_SELL_LIMIT, symbol, sellPrice, sellSL, sellTP, lotSize, expiration);
+                        if(sellTicket > 0) {
+                            RegisterOrderPlaced(symbol, sellPrice, news.time, news.title);
+                            RegisterOrderForNews(sellTicket, news.time, news.title, news.currency);
+                        }
+                    }
+                }
+                
+                // Ордер на отскок от нижнего уровня (buy limit)
+                if(bid > lowM15 + distance) {
+                    double buyPrice = lowM15 + distance * 0.236;
+                    double buySL = buyPrice - (slDistanceInPips * pipSize);
+                    double buyTP = buyPrice + (tpDistanceInPips * pipSize);
+                    
+                    if(CanPlaceOrder(symbol, buyPrice, news.time, news.title)) {
+                        datetime expiration = UseOrderExpiration ? news.time + NewsMinutesAfter * 60 : 0;
+                        ulong buyTicket = PlacePendingOrder(ORDER_TYPE_BUY_LIMIT, symbol, buyPrice, buySL, buyTP, lotSize, expiration);
+                        if(buyTicket > 0) {
+                            RegisterOrderPlaced(symbol, buyPrice, news.time, news.title);
+                            RegisterOrderForNews(buyTicket, news.time, news.title, news.currency);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    void ExecuteFundamentalStrategy(string symbol, NewsEvent& news) {
+        // Стратегия работает только с новостями, где есть прогноз и фактическое значение
+        if(!news.hasForecast || news.actual == 0) {
+            return;
+        }
+        
+        // Вычисляем отклонение фактического значения от прогноза
+        double deviation = 0;
+        if(news.forecast != 0) {
+            deviation = ((news.actual - news.forecast) / MathAbs(news.forecast)) * 100.0;
+        } else {
+            // Если прогноз 0, сравниваем с предыдущим значением
+            if(news.previous != 0) {
+                deviation = ((news.actual - news.previous) / MathAbs(news.previous)) * 100.0;
+            } else {
+                return; // Невозможно определить отклонение
+            }
+        }
+        
+        // Проверяем минимальное отклонение
+        if(MathAbs(deviation) < FundamentalDeviationPercent) {
+            return;
+        }
+        
+        // Определяем направление на основе типа новости и отклонения
+        bool shouldBuy = false;
+        bool shouldSell = false;
+        
+        // Анализ по типу новости
+        string titleUpper = news.title;
+        StringToUpper(titleUpper);
+        
+        // Позитивные для валюты индикаторы (рост = укрепление валюты)
+        if(StringFind(titleUpper, "GDP") >= 0 ||
+           StringFind(titleUpper, "EMPLOYMENT") >= 0 ||
+           StringFind(titleUpper, "NFP") >= 0 ||
+           StringFind(titleUpper, "RETAIL SALES") >= 0 ||
+           StringFind(titleUpper, "PMI") >= 0 ||
+           StringFind(titleUpper, "CONSUMER CONFIDENCE") >= 0) {
+            
+            if(deviation > 0) { // Лучше прогноза
+                // Для базовой валюты пары - покупаем
+                if(StringFind(symbol, news.currency) == 0) shouldBuy = true;
+                // Для котируемой валюты - продаем
+                else if(StringFind(symbol, news.currency) > 0) shouldSell = true;
+            } else { // Хуже прогноза
+                if(StringFind(symbol, news.currency) == 0) shouldSell = true;
+                else if(StringFind(symbol, news.currency) > 0) shouldBuy = true;
+            }
+        }
+        // CPI и процентные ставки - особая логика
+        else if(StringFind(titleUpper, "CPI") >= 0 ||
+                StringFind(titleUpper, "INTEREST RATE") >= 0 ||
+                StringFind(titleUpper, "RATE DECISION") >= 0) {
+            
+            // Высокая инфляция или повышение ставок обычно укрепляют валюту
+            if(deviation > 0) {
+                if(StringFind(symbol, news.currency) == 0) shouldBuy = true;
+                else if(StringFind(symbol, news.currency) > 0) shouldSell = true;
+            } else {
+                if(StringFind(symbol, news.currency) == 0) shouldSell = true;
+                else if(StringFind(symbol, news.currency) > 0) shouldBuy = true;
+            }
+        }
+        // Безработица - инвертированная логика
+        else if(StringFind(titleUpper, "UNEMPLOYMENT") >= 0) {
+            if(deviation > 0) { // Больше безработных - плохо для валюты
+                if(StringFind(symbol, news.currency) == 0) shouldSell = true;
+                else if(StringFind(symbol, news.currency) > 0) shouldBuy = true;
+            } else {
+                if(StringFind(symbol, news.currency) == 0) shouldBuy = true;
+                else if(StringFind(symbol, news.currency) > 0) shouldSell = true;
+            }
+        }
+        
+        // Дополнительный фильтр для больших сюрпризов
+        if(TradeOnlyMajorSurprises && MathAbs(deviation) < FundamentalDeviationPercent * 2) {
+            return;
+        }
+        
+        // Открываем позицию
+        if(shouldBuy || shouldSell) {
+            double currentPrice = shouldBuy ? SymbolInfoDouble(symbol, SYMBOL_ASK) : SymbolInfoDouble(symbol, SYMBOL_BID);
+            
+            // Расчет параметров позиции
+            int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+            double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+            double pipSize = (digits == 5 || digits == 3) ? point * 10 : point;
+            
+            // Используем специальный множитель ATR для фундаментальной стратегии
+            double distance = currentATR * FundamentalATRMultiplier;
+            double distanceInPips = distance / pipSize;
+            double slDistanceInPips = distanceInPips * StopLossMultiplier;
+            double tpDistanceInPips = distanceInPips * TakeProfitMultiplier;
+            
+            // Увеличиваем TP для больших отклонений
+            if(MathAbs(deviation) > FundamentalDeviationPercent * 3) {
+                tpDistanceInPips *= 1.5;
+            }
+            
+            double lotSize = riskManager.CalculatePositionSize(symbol, slDistanceInPips);
+            
+            if(shouldBuy) {
+                if(CanPlaceOrder(symbol, currentPrice, news.time, news.title)) {
+                    double sl = currentPrice - (slDistanceInPips * pipSize);
+                    double tp = currentPrice + (tpDistanceInPips * pipSize);
+                    
+                    string comment = StringFormat("Fund Buy: %s %.1f%%", news.title, deviation);
+                    if(trade.Buy(lotSize, symbol, 0, sl, tp, comment)) {
+                        RegisterOrderPlaced(symbol, currentPrice, news.time, news.title);
+                        
+                        // Получаем ticket последней позиции
+                        ulong ticket = 0;
+                        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                            if(PositionSelectByTicket(PositionGetTicket(i))) {
+                                if(PositionGetString(POSITION_SYMBOL) == symbol &&
+                                   PositionGetInteger(POSITION_MAGIC) == MagicNumber) {
+                                    ticket = PositionGetTicket(i);
+                                    RegisterPosition(ticket, symbol, currentPrice, sl);
+                                    break;
+                                }
+                            }
+                        }
+                        if(ticket > 0) {
+                            RegisterOrderForNews(ticket, news.time, news.title, news.currency);
+                        }
+                        
+                        SendAlert(StringFormat("Фундаментальная покупка %s: %s отклонение %.1f%%", 
+                                             symbol, news.title, deviation));
+                    }
+                }
+            } else if(shouldSell) {
+                if(CanPlaceOrder(symbol, currentPrice, news.time, news.title)) {
+                    double sl = currentPrice + (slDistanceInPips * pipSize);
+                    double tp = currentPrice - (tpDistanceInPips * pipSize);
+                    
+                    string comment = StringFormat("Fund Sell: %s %.1f%%", news.title, deviation);
+                    if(trade.Sell(lotSize, symbol, 0, sl, tp, comment)) {
+                        RegisterOrderPlaced(symbol, currentPrice, news.time, news.title);
+                        
+                        // Получаем ticket последней позиции
+                        ulong ticket = 0;
+                        for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                            if(PositionSelectByTicket(PositionGetTicket(i))) {
+                                if(PositionGetString(POSITION_SYMBOL) == symbol &&
+                                   PositionGetInteger(POSITION_MAGIC) == MagicNumber) {
+                                    ticket = PositionGetTicket(i);
+                                    RegisterPosition(ticket, symbol, currentPrice, sl);
+                                    break;
+                                }
+                            }
+                        }
+                        if(ticket > 0) {
+                            RegisterOrderForNews(ticket, news.time, news.title, news.currency);
+                        }
+                        
+                        SendAlert(StringFormat("Фундаментальная продажа %s: %s отклонение %.1f%%", 
+                                             symbol, news.title, deviation));
+                    }
+                }
+            }
+        }
+    }
+    
+    bool IsBreakoutDetected(string symbol, double breakoutLevel) {
+        double currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        double prevPrice = iClose(symbol, PERIOD_M5, 1);
+        
+        // Проверяем пробой с подтверждением объемом
+        long currentVolume = iVolume(symbol, PERIOD_M1, 0);
+        long avgVolume = 0;
+        for(int i = 1; i <= 10; i++) {
+            avgVolume += iVolume(symbol, PERIOD_M1, i);
+        }
+        avgVolume /= 10;
+        
+        bool volumeConfirmed = currentVolume > avgVolume * 1.5;
+        
+        // Пробой вверх
+        if(prevPrice < breakoutLevel && currentPrice > breakoutLevel && volumeConfirmed) {
+            return true;
+        }
+        
+        // Пробой вниз
+        if(prevPrice > breakoutLevel && currentPrice < breakoutLevel && volumeConfirmed) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    void CreatePullbackSetup(string symbol, double breakoutLevel, NewsEvent& news) {
+        int size = ArraySize(pullbackSetups);
+        ArrayResize(pullbackSetups, size + 1);
+        
+        PullbackSetup setup;
+        setup.setupTime = TimeCurrent();
+        setup.symbol = symbol;
+        setup.breakoutLevel = breakoutLevel;
+        setup.isActive = true;
+        
+        // Время истечения сетапа
+        if(UseOrderExpiration) {
+            setup.expiryTime = news.time + OrderExpirationMinutes * 60;
+        } else {
+            setup.expiryTime = news.time + NewsMinutesAfter * 60;
+        }
+        
+        double currentPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        
+        if(currentPrice > breakoutLevel) {
+            // Пробой вверх - ждем пуллбэк вниз
+            setup.isLongSetup = true;
+            double moveSize = currentPrice - breakoutLevel;
+            setup.entryZoneHigh = breakoutLevel + moveSize * 0.618; // 61.8% уровень
+            setup.entryZoneLow = breakoutLevel + moveSize * 0.382;  // 38.2% уровень
+        } else {
+            // Пробой вниз - ждем пуллбэк вверх
+            setup.isLongSetup = false;
+            double moveSize = breakoutLevel - currentPrice;
+            setup.entryZoneLow = breakoutLevel - moveSize * 0.618;  // 61.8% уровень
+            setup.entryZoneHigh = breakoutLevel - moveSize * 0.382; // 38.2% уровень
+        }
+        
+        pullbackSetups[size] = setup;
+    }
+    
+    bool CheckPullbackEntry(int setupIndex) {
+        if(setupIndex < 0 || setupIndex >= ArraySize(pullbackSetups)) return false;
+        
+        PullbackSetup setup;
+        setup = pullbackSetups[setupIndex];
+        double currentPrice = SymbolInfoDouble(setup.symbol, SYMBOL_ASK);
+        
+        // Проверяем, что цена в зоне входа
+        if(currentPrice >= setup.entryZoneLow && currentPrice <= setup.entryZoneHigh) {
+            // Дополнительное подтверждение - проверка паттернов
+            if(IsPullbackConfirmed(setup.symbol, setup.isLongSetup)) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    bool IsPullbackConfirmed(string symbol, bool isLongSetup) {
+        // Проверяем формирование разворотного паттерна
+        double close1 = iClose(symbol, PERIOD_M5, 1);
+        double close2 = iClose(symbol, PERIOD_M5, 2);
+        double close3 = iClose(symbol, PERIOD_M5, 3);
+        
+        double open1 = iOpen(symbol, PERIOD_M5, 1);
+        double open2 = iOpen(symbol, PERIOD_M5, 2);
+        double high1 = iHigh(symbol, PERIOD_M5, 1);
+        double low1 = iLow(symbol, PERIOD_M5, 1);
+        
+        if(isLongSetup) {
+            // Для лонга ищем бычий разворот
+            // Паттерн "молот" или поглощение
+            bool hammer = (close1 > open1) && ((high1 - close1) < (close1 - open1) * 0.3) && 
+                         ((open1 - low1) > (close1 - open1) * 2);
+            bool engulfing = (close1 > open1) && (close2 < open2) && (close1 > open2) && (open1 < close2);
+            
+            return hammer || engulfing || (close3 > close2 && close2 < close1 && close1 > close2);
+        } else {
+            // Для шорта ищем медвежий разворот
+            // Паттерн "падающая звезда" или поглощение
+            bool shootingStar = (close1 < open1) && ((close1 - low1) < (open1 - close1) * 0.3) && 
+                               ((high1 - open1) > (open1 - close1) * 2);
+            bool engulfing = (close1 < open1) && (close2 > open2) && (close1 < open2) && (open1 > close2);
+            
+            return shootingStar || engulfing || (close3 < close2 && close2 > close1 && close1 < close2);
+        }
+    }
+    
+    bool ShouldCancelPullbackSetup(int setupIndex) {
+        if(setupIndex < 0 || setupIndex >= ArraySize(pullbackSetups)) return false;
+        
+        PullbackSetup setup;
+        setup = pullbackSetups[setupIndex];
+        double currentPrice = SymbolInfoDouble(setup.symbol, SYMBOL_ASK);
+        datetime currentTime = TimeCurrent();
+        
+        // УСЛОВИЯ ОТМЕНЫ:
+        
+        // 1. Истекло время ожидания
+        if(currentTime > setup.expiryTime) {
+            return true;
+        }
+        
+        // 2. Цена ушла слишком далеко без пуллбэка
+        double distanceFromBreakout = MathAbs(currentPrice - setup.breakoutLevel);
+        if(distanceFromBreakout > currentATR * 5) {
+            return true;
+        }
+        
+        // 3. Пробой уровня поддержки/сопротивления в противоположном направлении
+        if(setup.isLongSetup && currentPrice < setup.breakoutLevel - currentATR) {
+            return true;
+        }
+        
+        if(!setup.isLongSetup && currentPrice > setup.breakoutLevel + currentATR) {
+            return true;
+        }
+        
+        // 4. Слишком глубокий откат (больше 78.6%)
+        if(setup.isLongSetup) {
+            double moveSize = setup.entryZoneHigh - setup.breakoutLevel;
+            if(currentPrice < setup.breakoutLevel + moveSize * 0.214) { // Ниже 21.4% = глубже 78.6%
+                return true;
+            }
+        } else {
+            double moveSize = setup.breakoutLevel - setup.entryZoneLow;
+            if(currentPrice > setup.breakoutLevel - moveSize * 0.214) {
+                return true;
+            }
+        }
+        
+        // 5. Изменение волатильности
+        double currentATRLocal = GetCurrentATR(setup.symbol);
+        double setupATR = currentATR; // ATR на момент создания сетапа
+        if(currentATRLocal < setupATR * 0.5) {
+            return true;
+        }
+        
+        return false;
+    }
+    
+    void CancelPullbackSetup(int setupIndex) {
+        if(setupIndex < 0 || setupIndex >= ArraySize(pullbackSetups)) return;
+        
+        pullbackSetups[setupIndex].isActive = false;
+        SendAlert(StringFormat("Пуллбэк сетап отменен для %s", pullbackSetups[setupIndex].symbol));
+    }
+    
+    void EnterPullbackTrade(int setupIndex, NewsEvent& news) {
+        if(setupIndex < 0 || setupIndex >= ArraySize(pullbackSetups)) return;
+        
+        PullbackSetup setup;
+        setup = pullbackSetups[setupIndex];
+        
+        double currentPrice = SymbolInfoDouble(setup.symbol, setup.isLongSetup ? SYMBOL_ASK : SYMBOL_BID);
+        
+        if(!CanPlaceOrder(setup.symbol, currentPrice, news.time, news.title)) {
+            return;
+        }
+        
+        // Корректный расчет размера позиции
+        int digits = (int)SymbolInfoInteger(setup.symbol, SYMBOL_DIGITS);
+        double point = SymbolInfoDouble(setup.symbol, SYMBOL_POINT);
+        double pipSize = (digits == 5 || digits == 3) ? point * 10 : point;
+        
+        double distanceInPips = currentATR / pipSize;
+        double slDistanceInPips = distanceInPips * 0.5; // Более тайтный стоп для пуллбэка
+        double tpDistanceInPips = distanceInPips * TakeProfitMultiplier * 1.5;
+        
+        double lotSize = riskManager.CalculatePositionSize(setup.symbol, slDistanceInPips);
+        
+        if(setup.isLongSetup) {
+            double sl = setup.entryZoneLow - (slDistanceInPips * pipSize);
+            double tp = setup.breakoutLevel + (tpDistanceInPips * pipSize);
+            
+            if(trade.Buy(lotSize, setup.symbol, 0, sl, tp, "Pullback Buy")) {
+                RegisterOrderPlaced(setup.symbol, currentPrice, news.time, news.title);
+                
+                // Получаем ticket последней позиции
+                ulong ticket = 0;
+                for(int i = PositionsTotal() - 1; i >= 0; i--) {
+                    if(PositionSelectByTicket(PositionGetTicket(i))) {
+                        if(PositionGetString(POSITION_SYMBOL) == setup.symbol &&
+                           PositionGetInteger(POSITION_MAGIC) == MagicNumber) {
+                            ticket = PositionGetTicket(i);
+                            RegisterPosition(ticket, setup.symbol, currentPrice, sl);
+                            break;
+                        }
+                    }
+                }
+                if(ticket > 0) {
+                    RegisterOrderForNews(ticket, news.time, news.title, news.currency);
+                }
+            }
+        } else {
+            double sl = setup.entryZoneHigh + (slDistanceInPips * pipSize);
+            double tp = setup.breakoutLevel - (tpDistanceInPips * pipSize);
+            
+            if(trade.Sell(lotSize, setup.symbol, 0, sl, tp, "Pullback Sell")) {
+                RegisterOrderPlaced(setup.symbol, currentPrice, news.time, news.title);
